@@ -1,0 +1,253 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ==========================================
+// Users & Authentication (Internal staff/admin)
+// ==========================================
+
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  password     String
+  name         String
+  role         String        @default("ADMIN") // ADMIN, STAFF
+  theme        String        @default("SYSTEM") // SYSTEM, LIGHT, DARK
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  activityLogs ActivityLog[]
+}
+
+// ==========================================
+// Customers CRM
+// ==========================================
+
+model Customer {
+  id             String           @id @default(cuid())
+  name           String
+  phone          String?
+  facebook       String?
+  telegram       String?
+  zalo           String?
+  note           String?
+  tag            String           @default("NEW") // NEW, REGULAR, VIP, INACTIVE_30, INACTIVE_60, INACTIVE_90
+  creditRating   String           @default("B") // A_PLUS, A, B, C, D
+  isDeleted      Boolean          @default(false)
+  deletedAt      DateTime?
+  orders         Order[]
+  paymentRecords PaymentRecord[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([phone])
+  @@index([tag])
+}
+
+// ==========================================
+// Services (Simplified)
+// ==========================================
+
+model Service {
+  id                  String    @id @default(cuid())
+  name                String
+  slug                String    @unique
+  logo                String?   // Emoji or icon name or URL
+  description         String?
+  serviceType         String?   @default("") // Loại dịch vụ (e.g. Canva, ChatGPT, v.v.)
+  defaultSalePrice    Float     @default(0) // Giá bán mặc định
+  defaultCostPrice    Float     @default(0) // Giá vốn mặc định
+  defaultDurationDays Int       @default(30) // Thời hạn mặc định (30, 60, 90, 180, 365)
+  isActive            Boolean   @default(true)
+  sortOrder           Int       @default(0)
+  isDeleted           Boolean   @default(false)
+  deletedAt           DateTime?
+  orders              Order[]
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// ==========================================
+// Supplier Sources (Nguồn hàng)
+// ==========================================
+
+model SupplierSource {
+  id        String    @id @default(cuid())
+  name      String
+  telegram  String?
+  zalo      String?
+  email     String?
+  note      String?
+  isActive  Boolean   @default(true)
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  orders    Order[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// ==========================================
+// Orders (Central CRM Data Hub)
+// ==========================================
+
+model Order {
+  id              String   @id @default(cuid())
+  orderCode       String   @unique
+
+  // Customer
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+
+  // Service
+  serviceId       String
+  service         Service  @relation(fields: [serviceId], references: [id])
+
+  // Package Info
+  packageName     String   // e.g., "Gói 30 ngày", "Vĩnh viễn"
+  durationDays    Int      // 30, 90, 365, etc.
+
+  // Account Credentials
+  accountEmail    String?
+  accountPassword String?
+  recoveryCode    String?  // Recovery codes / backup links
+  loginLink       String?  // Login portal / URL
+  accountNote     String?  // Internal account instructions
+
+  // Supplier Source
+  supplierSourceId   String?
+  supplierSource     SupplierSource? @relation(fields: [supplierSourceId], references: [id])
+  supplierSourceName String?         // Cached name for reporting
+
+  // Financials
+  salePrice       Float
+  costPrice       Float
+  profit          Float    // salePrice - costPrice
+
+  // Payment tracking (#61, #72)
+  paymentStatus   String   @default("UNPAID") // UNPAID, PAID, OVERDUE
+  paymentDueDate  DateTime? // Hạn thanh toán (#63)
+  paidAt          DateTime? // Ngày thanh toán thực tế
+  paidAmount      Float    @default(0) // Số tiền đã thanh toán
+
+  // Subscriptions Dates
+  startDate       DateTime @default(now())
+  endDate         DateTime
+
+  // Order Status (#35 - New warranty flow)
+  // ACTIVE = Đang sử dụng
+  // EXPIRING_SOON = Sắp hết hạn (<7 ngày)
+  // EXPIRED = Hết hạn
+  // WARRANTY = Khách báo lỗi
+  // WARRANTY_PENDING_SOURCE = Chờ nguồn hoàn tiền
+  // WARRANTY_PENDING_REFUND = Chờ hoàn khách (nguồn đã đồng ý)
+  // WARRANTY_DONE = Hoàn tất bảo hành
+  // WARRANTY_REJECTED = Nguồn từ chối bảo hành
+  // REFUNDED = Đã hoàn tiền (legacy)
+  status          String   @default("ACTIVE")
+
+  note            String?
+
+  // Relations
+  refundHistories     RefundHistory[]
+  financialChangeLogs FinancialChangeLog[]
+  paymentRecords      PaymentRecord[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([supplierSourceId])
+  @@index([createdAt])
+  @@index([endDate])
+  @@index([endDate, status])            // Tối ưu query thuê bao sắp hết hạn
+  @@index([paymentStatus, paymentDueDate]) // Tối ưu aging / debt queries
+  @@index([serviceId, status])          // Tối ưu báo cáo theo dịch vụ
+  @@index([supplierSourceId, status])   // Tối ưu công nợ nguồn
+}
+
+// ==========================================
+// Refund History (Lịch sử hoàn tiền)
+// ==========================================
+
+model RefundHistory {
+  id            String    @id @default(cuid())
+  orderId       String
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount        Float
+  autoRefundAmount Float @default(0) // Tiền tự tính
+  daysUsed      Int
+  daysRemaining Int
+  costPerDay    Float
+  errorDate     DateTime? // Date error occurred (used for pro-rata calc)
+  operatorName  String?   // Admin/Staff who refunded
+  note          String?   // Reason/notes
+  sourceAmount  Float     @default(0) // Tiền nguồn hoàn
+  sourceRefundExpected Float @default(0) // Nguồn phải hoàn dự kiến
+  sourceRefundActual   Float @default(0) // Nguồn hoàn thực tế
+  // Simplified source status (#37): PENDING (default/chờ), REFUNDED (đã hoàn), REJECTED (từ chối)
+  sourceStatus  String    @default("PENDING")
+  netProfitAfterRefund Float @default(0) // Lợi nhuận sau hoàn
+  createdAt     DateTime  @default(now())
+}
+
+// ==========================================
+// Financial Change Log (#48 - Khóa dữ liệu tài chính)
+// ==========================================
+
+model FinancialChangeLog {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fieldName   String   // salePrice, costPrice, refundAmount
+  oldValue    Float
+  newValue    Float
+  changedBy   String?  // Name of admin who changed
+  reason      String?  // Reason for change
+  createdAt   DateTime @default(now())
+
+  @@index([orderId])
+}
+
+// ==========================================
+// Payment Records (#66 - Lịch sử thanh toán)
+// ==========================================
+
+model PaymentRecord {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  orderId     String?
+  order       Order?   @relation(fields: [orderId], references: [id])
+  amount      Float
+  method      String?  // cash, bank, momo, zalopay, etc.
+  note        String?
+  paidAt      DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([customerId])
+  @@index([orderId])
+}
+
+// ==========================================
+// Activity Logs
+// ==========================================
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  target    String?
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
