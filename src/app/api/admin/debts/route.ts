@@ -14,6 +14,9 @@ export async function GET(request: Request) {
     const search = searchParams.get('search') || '';
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
+    const minOverdueDaysParam = searchParams.get('minOverdueDays');
+    const minOverdueDays = minOverdueDaysParam !== null && minOverdueDaysParam !== '' ? parseInt(minOverdueDaysParam) : null;
+
 
     const now = new Date();
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -111,8 +114,37 @@ export async function GET(request: Request) {
     // Sort by maxDebtDays desc (highest days of debt first)
     debtList.sort((a, b) => b.maxDebtDays - a.maxDebtDays);
 
+    // Compute buckets statistics AFTER search, BEFORE aging filter
+    const buckets = {
+      all: {
+        count: debtList.length,
+        sum: debtList.reduce((sum, d) => sum + d.totalDebt, 0),
+      },
+      over1: {
+        count: debtList.filter(d => d.maxDebtDays >= 1).length,
+        sum: debtList.filter(d => d.maxDebtDays >= 1).reduce((sum, d) => sum + d.totalDebt, 0),
+      },
+      over3: {
+        count: debtList.filter(d => d.maxDebtDays >= 3).length,
+        sum: debtList.filter(d => d.maxDebtDays >= 3).reduce((sum, d) => sum + d.totalDebt, 0),
+      },
+      over7: {
+        count: debtList.filter(d => d.maxDebtDays >= 7).length,
+        sum: debtList.filter(d => d.maxDebtDays >= 7).reduce((sum, d) => sum + d.totalDebt, 0),
+      },
+      over30: {
+        count: debtList.filter(d => d.maxDebtDays >= 30).length,
+        sum: debtList.filter(d => d.maxDebtDays >= 30).reduce((sum, d) => sum + d.totalDebt, 0),
+      },
+    };
+
+    // Filter by minOverdueDays
+    if (minOverdueDays !== null && minOverdueDays > 0) {
+      debtList = debtList.filter((d) => d.maxDebtDays >= minOverdueDays);
+    }
+
     // ==========================================
-    // Dashboard stats
+    // Dashboard stats (of the currently selected list)
     // ==========================================
     const totalDebtAmount = debtList.reduce((sum, d) => sum + d.totalDebt, 0);
     const unpaidOrdersCount = debtList.reduce((sum, d) => sum + d.orderCount, 0);
@@ -142,6 +174,7 @@ export async function GET(request: Request) {
         debtOver7DaysCount,
         topDebtors,
       },
+      buckets,
       debts: paginatedList.map((d) => ({
         customerId: d.customer.id,
         customerName: d.customer.name,

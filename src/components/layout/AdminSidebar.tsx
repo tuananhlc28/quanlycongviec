@@ -76,7 +76,7 @@ export default function AdminSidebar() {
     { href: '/admin/sources',       label: '📦 Nguồn hàng',       icon: Plug },
     {
       href: '/admin/subscriptions',
-      label: '🔄 Thuê bao',
+      label: '🔄 Quản lý tài khoản',
       icon: RotateCcw,
       badge: expiringCount,
     },

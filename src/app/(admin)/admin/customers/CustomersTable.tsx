@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import Link from 'next/link';
 import { Phone, MessageCircle, RotateCcw, Trash2, Loader2, X, AlertTriangle, Edit2, Plus, Search, ExternalLink, Download, Copy, Check, Clock, Send } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -22,6 +23,8 @@ interface CustomerWithOrders {
   note: string | null;
   tag: string;
   creditRating: string;
+  status: string;
+  renewalsCount: number;
   isDeleted: boolean;
   deletedAt: Date | string | null;
   createdAt: Date | string;
@@ -60,63 +63,19 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
 
   const [activeTab, setActiveTab] = useState<'active' | 'deleted'>('active');
   const [search, setSearch] = useState('');
-  const [dateStart, setDateStart] = useState('');
-  const [dateEnd, setDateEnd] = useState('');
+  
+  // Filter States
+  const [selectedTag, setSelectedTag] = useState('');
+  const [selectedRating, setSelectedRating] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('');
+  
+  // Sorting States
+  const [sortBy, setSortBy] = useState('spent'); // spent, revenue, profit, debt, orders, renewals, warranties
+  const [sortDirection, setSortDirection] = useState('desc'); // desc, asc
+
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
 
-  const handlePreset = (preset: string) => {
-    const now = new Date();
-    let start = new Date(now);
-    let end = new Date(now);
-
-    const formatDateString = (d: Date) => {
-      return d.toISOString().split('T')[0];
-    };
-
-    switch (preset) {
-      case 'today':
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '3days':
-        start.setDate(start.getDate() - 2);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '7days':
-        start.setDate(start.getDate() - 6);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '30days':
-        start.setDate(start.getDate() - 29);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '3months':
-        start.setMonth(start.getMonth() - 3);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '6months':
-        start.setMonth(start.getMonth() - 6);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '1year':
-        start.setFullYear(start.getFullYear() - 1);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case 'all':
-        setDateStart('');
-        setDateEnd('');
-        break;
-    }
-    setCurrentPage(1);
-  };
-  
   // Modal states
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerWithOrders | null>(null);
@@ -126,6 +85,8 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
   const [telegram, setTelegram] = useState('');
   const [zalo, setZalo] = useState('');
   const [note, setNote] = useState('');
+  const [tag, setTag] = useState('NEW');
+  const [status, setStatus] = useState('ACTIVE');
   const [modalLoading, setModalLoading] = useState(false);
 
   // Delete modal
@@ -235,7 +196,8 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
 
     return initialCustomers.map(c => {
       let totalOrders = c.orders.length;
-      let totalSpent = 0;
+      let totalSpent = 0; // Chi tiêu = Tổng tiền đã thanh toán
+      let totalRevenue = 0; // Doanh thu = Tổng giá bán
       let totalRefund = 0;
       let totalProfit = 0;
       let lastPurchaseDate: Date | null = null;
@@ -250,9 +212,11 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
       }
 
       let currentDebt = 0;
+      let warrantiesCount = 0;
 
       for (const o of c.orders) {
-        totalSpent += o.salePrice;
+        totalSpent += o.paidAmount;
+        totalRevenue += o.salePrice;
         if (o.paymentStatus === 'UNPAID' || o.paymentStatus === 'OVERDUE') {
           currentDebt += Math.max(0, o.salePrice - o.paidAmount);
         }
@@ -262,6 +226,7 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
         
         totalProfit += (o.salePrice - o.costPrice) - orderRefunds + orderSourceRefunds;
         totalRefund += orderRefunds;
+        warrantiesCount += o.refundHistories ? o.refundHistories.length : 0;
       }
 
       // Calculate relative recency string
@@ -279,31 +244,25 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
         }
       }
 
-      // Customer Classification Badge
+      // Dynamic Classification Badge
       let badgeLabel = '🟡 Khách mới';
       let badgeStyle = 'bg-amber-500/10 text-amber-500 border border-amber-500/20';
-      let segmentKey = 'new';
 
       if (daysSinceLastPurchase >= 90 && lastPurchaseDate) {
         badgeLabel = '🔴 90 ngày chưa mua';
         badgeStyle = 'bg-red-500/10 text-red-500 border border-red-500/20';
-        segmentKey = '90_days';
       } else if (daysSinceLastPurchase >= 60 && lastPurchaseDate) {
         badgeLabel = '🔴 60 ngày chưa mua';
         badgeStyle = 'bg-orange-500/10 text-orange-400 border border-orange-500/20';
-        segmentKey = '60_days';
       } else if (daysSinceLastPurchase >= 30 && lastPurchaseDate) {
         badgeLabel = '🔴 30 ngày chưa mua';
         badgeStyle = 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20';
-        segmentKey = '30_days';
       } else if (totalSpent >= 5000000 || totalOrders >= 5) {
-        badgeLabel = '🟢 VIP';
-        badgeStyle = 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-        segmentKey = 'vip';
+        badgeLabel = '🟣 VIP';
+        badgeStyle = 'bg-purple-500/10 text-purple-400 border border-purple-500/20';
       } else if (totalOrders >= 2) {
         badgeLabel = '🔵 Khách quen';
         badgeStyle = 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
-        segmentKey = 'regular';
       }
 
       return {
@@ -311,7 +270,6 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
         lastPurchaseDate,
         recencyText,
         daysSinceLastPurchase,
-        segmentKey,
         latestOrderServiceAndPackage,
         badge: {
           label: badgeLabel,
@@ -320,38 +278,36 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
         stats: {
           totalOrders,
           totalSpent,
+          totalRevenue,
           totalRefund,
           totalProfit,
           currentDebt,
+          warrantiesCount,
         }
       };
     });
   }, [initialCustomers]);
 
-  // 2. Filter list based on tab, search & segment
+  // 2. Filter list based on tab, search, tags, ratings, and status
   const filteredCustomers = useMemo(() => {
     // Reset to page 1 whenever filters change
     setCurrentPage(1);
 
-    return processedCustomers.filter((c) => {
+    const filtered = processedCustomers.filter((c) => {
       const matchesTab = activeTab === 'active' ? !c.isDeleted : c.isDeleted;
       if (!matchesTab) return false;
 
-      // Filter by care segments
-      if (activeSegment) {
-        if (c.segmentKey !== activeSegment) return false;
-      }
+      // Filter by custom tags
+      if (selectedTag && c.tag !== selectedTag) return false;
 
-      // Filter by creation date range
-      if (dateStart) {
-        const startLimit = new Date(dateStart);
-        startLimit.setHours(0, 0, 0, 0);
-        if (new Date(c.createdAt) < startLimit) return false;
-      }
-      if (dateEnd) {
-        const endLimit = new Date(dateEnd);
-        endLimit.setHours(23, 59, 59, 999);
-        if (new Date(c.createdAt) > endLimit) return false;
+      // Filter by credit rating S/A/B/C/D/NEW
+      if (selectedRating && c.creditRating !== selectedRating) return false;
+
+      // Filter by status (Hoạt động, Tạm khóa, VIP)
+      if (selectedStatus) {
+        if (selectedStatus === 'ACTIVE' && c.status !== 'ACTIVE') return false;
+        if (selectedStatus === 'LOCKED' && c.status !== 'LOCKED') return false;
+        if (selectedStatus === 'VIP' && c.status !== 'VIP') return false;
       }
 
       if (!search) return true;
@@ -365,7 +321,42 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
         (c.note && c.note.toLowerCase().includes(term))
       );
     });
-  }, [processedCustomers, activeTab, search, activeSegment, dateStart, dateEnd]);
+
+    // Sort by selected metric
+    return filtered.sort((a, b) => {
+      let valA = 0;
+      let valB = 0;
+
+      if (sortBy === 'spent') {
+        valA = a.stats.totalSpent;
+        valB = b.stats.totalSpent;
+      } else if (sortBy === 'revenue') {
+        valA = a.stats.totalRevenue;
+        valB = b.stats.totalRevenue;
+      } else if (sortBy === 'profit') {
+        valA = a.stats.totalProfit;
+        valB = b.stats.totalProfit;
+      } else if (sortBy === 'debt') {
+        valA = a.stats.currentDebt;
+        valB = b.stats.currentDebt;
+      } else if (sortBy === 'orders') {
+        valA = a.stats.totalOrders;
+        valB = b.stats.totalOrders;
+      } else if (sortBy === 'renewals') {
+        valA = a.renewalsCount || 0;
+        valB = b.renewalsCount || 0;
+      } else if (sortBy === 'warranties') {
+        valA = a.stats.warrantiesCount;
+        valB = b.stats.warrantiesCount;
+      }
+
+      if (sortDirection === 'asc') {
+        return valA - valB;
+      } else {
+        return valB - valA;
+      }
+    });
+  }, [processedCustomers, activeTab, search, selectedTag, selectedRating, selectedStatus, sortBy, sortDirection]);
 
   // 3. Slice for client-side pagination
   const paginatedCustomers = useMemo(() => {
@@ -374,7 +365,7 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
   }, [filteredCustomers, currentPage, pageSize]);
 
   // Handle open add/edit modal
-  const handleOpenModal = (customer: CustomerWithOrders | null = null) => {
+  const handleOpenModal = (customer: any | null = null) => {
     setSelectedCustomer(customer);
     if (customer) {
       setName(customer.name);
@@ -383,6 +374,8 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
       setTelegram(customer.telegram || '');
       setZalo(customer.zalo || '');
       setNote(customer.note || '');
+      setTag(customer.tag || 'NEW');
+      setStatus(customer.status || 'ACTIVE');
     } else {
       setName('');
       setPhone('');
@@ -390,6 +383,8 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
       setTelegram('');
       setZalo('');
       setNote('');
+      setTag('NEW');
+      setStatus('ACTIVE');
     }
     setCustomerModalOpen(true);
   };
@@ -412,7 +407,7 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, phone, facebook, telegram, zalo, note }),
+        body: JSON.stringify({ name, phone, facebook, telegram, zalo, note, tag, status }),
       });
 
       if (res.ok) {
@@ -542,35 +537,64 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
             />
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center gap-3 w-full xl:w-auto justify-end">
-            <div className="flex items-center gap-2 text-xs text-slate-400 w-full sm:w-auto">
-              <span>Từ:</span>
-              <input
-                type="date"
-                value={dateStart}
-                onChange={(e) => setDateStart(e.target.value)}
-                className="px-2 py-1.5 rounded-lg bg-[#131722] border border-white/10 text-white text-xs w-full focus:outline-none focus:border-indigo-500"
-              />
-              <span>Đến:</span>
-              <input
-                type="date"
-                value={dateEnd}
-                onChange={(e) => setDateEnd(e.target.value)}
-                className="px-2 py-1.5 rounded-lg bg-[#131722] border border-white/10 text-white text-xs w-full focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-            
-            <div className="flex gap-2 w-full sm:w-auto justify-end">
+          <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+            {/* Tag Filter */}
+            <select
+              value={selectedTag}
+              onChange={(e) => setSelectedTag(e.target.value)}
+              className="px-3 py-2 rounded-xl bg-[#131722] border border-white/10 text-slate-300 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
+            >
+              <option value="">-- Tất cả Tag --</option>
+              <option value="NEW">Mới (NEW)</option>
+              <option value="REGULAR">Quen (REGULAR)</option>
+              <option value="VIP">VIP</option>
+              <option value="DAI_LY">Đại lý</option>
+              <option value="SPAM">Spam</option>
+              <option value="KHACH_NO">Khách nợ</option>
+              <option value="THAN_THIET">Thân thiết</option>
+              <option value="INACTIVE_30">30 ngày chưa mua</option>
+              <option value="INACTIVE_60">60 ngày chưa mua</option>
+              <option value="INACTIVE_90">90 ngày chưa mua</option>
+            </select>
+
+            {/* Credit Rating Filter */}
+            <select
+              value={selectedRating}
+              onChange={(e) => setSelectedRating(e.target.value)}
+              className="px-3 py-2 rounded-xl bg-[#131722] border border-white/10 text-slate-300 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
+            >
+              <option value="">-- Điểm uy tín --</option>
+              <option value="S">S (Xuất sắc)</option>
+              <option value="A">A (Tốt)</option>
+              <option value="B">B (Trung bình)</option>
+              <option value="C">C (Yếu)</option>
+              <option value="D">D (Tệ)</option>
+              <option value="NEW">NEW (Mới)</option>
+            </select>
+
+            {/* Status Filter */}
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="px-3 py-2 rounded-xl bg-[#131722] border border-white/10 text-slate-300 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
+            >
+              <option value="">-- Trạng thái --</option>
+              <option value="ACTIVE">Hoạt động</option>
+              <option value="LOCKED">Tạm khóa</option>
+              <option value="VIP">VIP</option>
+            </select>
+
+            <div className="flex gap-2 whitespace-nowrap">
               <button
                 onClick={() => handleOpenModal()}
-                className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md shadow-indigo-600/20 cursor-pointer whitespace-nowrap"
+                className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 Thêm khách hàng
               </button>
               <button
                 onClick={handleExportCSV}
-                className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold text-slate-300 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all cursor-pointer whitespace-nowrap"
+                className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-slate-300 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all cursor-pointer"
                 title="Xuất danh sách lọc"
               >
                 <Download className="w-4 h-4" />
@@ -580,52 +604,32 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
           </div>
         </div>
 
-        {/* Quick Date Presets */}
-        <div className="flex flex-wrap gap-1.5 items-center border-t border-white/5 pt-3">
-          <span className="text-[10px] text-slate-500 uppercase font-bold mr-2">Lọc nhanh:</span>
-          {[
-            { label: 'Hôm nay', value: 'today' },
-            { label: '3 ngày', value: '3days' },
-            { label: '7 ngày', value: '7days' },
-            { label: '30 ngày', value: '30days' },
-            { label: '3 tháng', value: '3months' },
-            { label: '6 tháng', value: '6months' },
-            { label: '1 năm', value: '1year' },
-            { label: 'Tất cả', value: 'all' },
-          ].map((p) => {
-            const dates = (() => {
-              const now = new Date();
-              let start = new Date(now);
-              let end = new Date(now);
-              const f = (d: Date) => d.toISOString().split('T')[0];
-              if (p.value === 'today') return { start: f(start), end: f(end) };
-              if (p.value === '3days') { start.setDate(start.getDate() - 2); return { start: f(start), end: f(end) }; }
-              if (p.value === '7days') { start.setDate(start.getDate() - 6); return { start: f(start), end: f(end) }; }
-              if (p.value === '30days') { start.setDate(start.getDate() - 29); return { start: f(start), end: f(end) }; }
-              if (p.value === '3months') { start.setMonth(start.getMonth() - 3); return { start: f(start), end: f(end) }; }
-              if (p.value === '6months') { start.setMonth(start.getMonth() - 6); return { start: f(start), end: f(end) }; }
-              if (p.value === '1year') { start.setFullYear(start.getFullYear() - 1); return { start: f(start), end: f(end) }; }
-              return { start: '', end: '' };
-            })();
-            const isActive = p.value === 'all' 
-              ? (!dateStart && !dateEnd)
-              : (dateStart === dates.start && dateEnd === dates.end);
+        {/* Sorting Controls */}
+        <div className="flex flex-wrap gap-3 items-center border-t border-white/5 pt-3">
+          <span className="text-[10px] text-slate-500 uppercase font-bold mr-2">Sắp xếp theo:</span>
+          
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="px-3 py-1.5 rounded-xl bg-[#131722] border border-white/10 text-slate-300 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
+          >
+            <option value="spent">Tổng chi tiêu</option>
+            <option value="revenue">Tổng doanh thu</option>
+            <option value="profit">Tổng lợi nhuận thực</option>
+            <option value="debt">Công nợ hiện tại</option>
+            <option value="orders">Tổng số đơn hàng</option>
+            <option value="renewals">Số lần gia hạn</option>
+            <option value="warranties">Số lần bảo hành</option>
+          </select>
 
-            return (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => handlePreset(p.value)}
-                className={`px-2.5 py-1 text-xs rounded-lg font-semibold transition-all border cursor-pointer ${
-                  isActive
-                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/10'
-                    : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 text-slate-300'
-                }`}
-              >
-                {p.label}
-              </button>
-            );
-          })}
+          <select
+            value={sortDirection}
+            onChange={(e) => setSortDirection(e.target.value)}
+            className="px-3 py-1.5 rounded-xl bg-[#131722] border border-white/10 text-slate-300 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer"
+          >
+            <option value="desc">Cao nhất (Giảm dần)</option>
+            <option value="asc">Thấp nhất (Tăng dần)</option>
+          </select>
         </div>
       </div>
 
@@ -701,7 +705,9 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
                         <div className="w-8 h-8 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xs flex-shrink-0">
                           {c.name.charAt(0).toUpperCase()}
                         </div>
-                        <span className="font-semibold text-white">{c.name}</span>
+                        <Link href={`/admin/customers/${c.id}`} className="font-semibold text-indigo-400 hover:underline transition-colors cursor-pointer">
+                          {c.name}
+                        </Link>
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap pl-10">
                         <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded ${tagCfg.color}`}>
@@ -948,6 +954,47 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
                   className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-slate-500 text-sm focus:border-indigo-500 transition-all focus:outline-none"
                 />
               </div>
+
+              {/* Tag Phân Loại */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">
+                  Tag Phân Loại
+                </label>
+                <select
+                  value={tag}
+                  onChange={(e) => setTag(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-[#131722] border border-white/10 text-white text-sm focus:border-indigo-500 transition-all focus:outline-none cursor-pointer"
+                >
+                  <option value="NEW">Mới (NEW)</option>
+                  <option value="REGULAR">Quen (REGULAR)</option>
+                  <option value="VIP">VIP</option>
+                  <option value="DAI_LY">Đại lý</option>
+                  <option value="SPAM">Spam</option>
+                  <option value="KHACH_NO">Khách nợ</option>
+                  <option value="THAN_THIET">Thân thiết</option>
+                  <option value="INACTIVE_30">30 ngày chưa mua</option>
+                  <option value="INACTIVE_60">60 ngày chưa mua</option>
+                  <option value="INACTIVE_90">90 ngày chưa mua</option>
+                </select>
+              </div>
+
+              {/* Trạng thái (Chỉ khi sửa) */}
+              {selectedCustomer && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">
+                    Trạng thái
+                  </label>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-[#131722] border border-white/10 text-white text-sm focus:border-indigo-500 transition-all focus:outline-none cursor-pointer"
+                  >
+                    <option value="ACTIVE">🟢 Hoạt động</option>
+                    <option value="LOCKED">🔴 Tạm khóa</option>
+                    <option value="VIP">🟣 VIP</option>
+                  </select>
+                </div>
+              )}
 
               {/* Ghi chú */}
               <div>

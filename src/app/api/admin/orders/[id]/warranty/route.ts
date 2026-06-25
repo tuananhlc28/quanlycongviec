@@ -47,11 +47,14 @@ export async function POST(
     const supplierCostPerDay = order.costPrice / totalDays;
     const sourceRefundExpected = Math.round(daysRemaining * supplierCostPerDay);
 
+    const updatedProfit = order.salePrice - order.costPrice - refundAmount + sourceRefundExpected;
+
     const updated = await prisma.$transaction(async (tx: any) => {
       const ord = await tx.order.update({
         where: { id },
         data: {
           status: 'WARRANTY',
+          profit: updatedProfit,
           note: updatedNote,
         },
       });

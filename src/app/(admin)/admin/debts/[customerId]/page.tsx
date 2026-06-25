@@ -164,7 +164,12 @@ export default function CustomerDebtDetailPage() {
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div>
-          <h1 className="text-2xl font-bold">Công nợ · {customer.name}</h1>
+          <h1 className="text-2xl font-bold">
+            Công nợ ·{' '}
+            <Link href={`/admin/customers/${customer.id}`} className="text-indigo-400 hover:text-indigo-300 hover:underline">
+              {customer.name}
+            </Link>
+          </h1>
           <p className="text-sm text-slate-400 mt-1">{customer.phone || 'Không có SĐT'}</p>
         </div>
       </div>

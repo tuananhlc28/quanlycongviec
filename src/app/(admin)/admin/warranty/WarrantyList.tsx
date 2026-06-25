@@ -9,6 +9,7 @@ import {
 import toast from 'react-hot-toast';
 import { formatCurrency, formatDateShort, getSourceRefundLabel } from '@/lib/utils';
 import { ORDER_STATUS_LABELS, ORDER_STATUS_COLORS } from '@/lib/constants';
+import CountdownBadge from '@/components/shared/CountdownBadge';
 
 interface WarrantyListProps {
   initialOrders: any[];
@@ -346,7 +347,15 @@ export default function WarrantyList({ initialOrders, supplierSources, services,
                     {group.customer?.name?.charAt(0)?.toUpperCase() || '?'}
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-white">{group.customer?.name}</h3>
+                    <h3 className="text-sm font-bold text-white">
+                      <Link
+                        href={`/admin/customers/${customerId}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="hover:text-indigo-400 transition-colors cursor-pointer"
+                      >
+                        {group.customer?.name}
+                      </Link>
+                    </h3>
                     <p className="text-[11px] text-slate-500 mt-0.5">
                       {group.customer?.phone || 'Không có SĐT'} · {group.orders.length} đơn lỗi
                     </p>
@@ -405,14 +414,25 @@ export default function WarrantyList({ initialOrders, supplierSources, services,
                             <span className="font-bold text-indigo-400">{order.orderCode}</span>
                             <div className="flex items-center gap-1.5 mt-0.5">
                               <span className="text-base">{order.service?.logo || '🔑'}</span>
-                              <span className="text-slate-300 truncate font-semibold">{order.service?.name}</span>
+                              <button
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setServiceFilter(order.serviceId);
+                                }}
+                                className="text-slate-300 truncate font-semibold hover:text-indigo-400 hover:underline cursor-pointer focus:outline-none"
+                              >
+                                {order.service?.name}
+                              </button>
                             </div>
                             <p className="text-[10px] text-slate-500 truncate mt-0.5">Nguồn: {order.supplierSourceName || 'Trực tiếp'}</p>
                           </div>
 
-                          <div className="col-span-3 space-y-0.5">
+                          <div className="col-span-3 space-y-1">
                             <p className="text-slate-300 font-medium">Đã dùng: <strong className="text-amber-400 font-mono">{daysUsed}</strong> / {durationDays} ngày</p>
-                            <p className="text-[10px] text-emerald-400 font-medium">Còn lại: <strong className="font-mono">{daysRemaining}</strong> ngày</p>
+                            <div>
+                              <CountdownBadge endDate={order.endDate} status={order.status} />
+                            </div>
                             <p className="text-[9px] text-slate-500 font-mono">
                               Kích hoạt: {formatDateShort(order.startDate)} · Hạn: {formatDateShort(order.endDate)}
                             </p>

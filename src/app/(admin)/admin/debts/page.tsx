@@ -43,10 +43,32 @@ export default function DebtsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
 
+  const [activeOverdueDays, setActiveOverdueDays] = useState<number | null>(null);
+  const [buckets, setBuckets] = useState<{
+    all: { count: number; sum: number };
+    over1: { count: number; sum: number };
+    over3: { count: number; sum: number };
+    over7: { count: number; sum: number };
+    over30: { count: number; sum: number };
+  }>({
+    all: { count: 0, sum: 0 },
+    over1: { count: 0, sum: 0 },
+    over3: { count: 0, sum: 0 },
+    over7: { count: 0, sum: 0 },
+    over30: { count: 0, sum: 0 },
+  });
+
+  const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
+  const [remindLoading, setRemindLoading] = useState(false);
+
   const fetchDebts = useCallback(async () => {
     setLoading(true);
     try {
-      const query = new URLSearchParams({ search, page: page.toString(), limit: '20' }).toString();
+      const params: Record<string, string> = { search, page: page.toString(), limit: '20' };
+      if (activeOverdueDays !== null) {
+        params.minOverdueDays = activeOverdueDays.toString();
+      }
+      const query = new URLSearchParams(params).toString();
       const res = await fetch(`/api/admin/debts?${query}`);
       if (res.ok) {
         const data = await res.json();
@@ -54,6 +76,9 @@ export default function DebtsPage() {
         setDebts(data.debts);
         setTotal(data.total);
         setTotalPages(data.totalPages);
+        if (data.buckets) {
+          setBuckets(data.buckets);
+        }
       } else {
         toast.error('Không thể tải dữ liệu công nợ');
       }
@@ -62,9 +87,43 @@ export default function DebtsPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, page]);
+  }, [search, page, activeOverdueDays]);
 
-  useEffect(() => { fetchDebts(); }, [fetchDebts]);
+  useEffect(() => {
+    fetchDebts();
+  }, [fetchDebts]);
+
+  useEffect(() => {
+    setPage(1);
+    setSelectedCustomerIds([]);
+  }, [activeOverdueDays, search]);
+
+  const handleBulkRemind = async () => {
+    if (selectedCustomerIds.length === 0) return;
+    setRemindLoading(true);
+    try {
+      const res = await fetch('/api/admin/debts/remind', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ customerIds: selectedCustomerIds }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(data.message || 'Đã gửi nhắc nhở thanh toán thành công');
+        setSelectedCustomerIds([]);
+      } else {
+        const data = await res.json();
+        toast.error(data.error || 'Có lỗi xảy ra');
+      }
+    } catch {
+      toast.error('Lỗi kết nối');
+    } finally {
+      setRemindLoading(false);
+    }
+  };
 
   // Debt days color helper
   const getDebtDaysColor = (days: number) => {
@@ -171,13 +230,15 @@ export default function DebtsPage() {
                     <div className="flex items-center gap-3">
                       <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black ${i === 0 ? 'bg-rose-500 text-white' : i === 1 ? 'bg-orange-500 text-white' : i === 2 ? 'bg-amber-500 text-white' : 'bg-slate-500/30 text-slate-400'}`}>{i + 1}</span>
                       <div>
-                        <p className="text-sm font-semibold text-white">{d.customerName}</p>
+                        <Link href={`/admin/customers/${d.customerId}`} className="text-sm font-semibold text-white hover:text-indigo-400 transition-colors">
+                          {d.customerName}
+                        </Link>
                         <p className="text-[10px] text-slate-500">{d.orderCount} đơn nợ</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
                       <p className="font-black text-rose-400 text-sm">{formatCurrency(d.totalDebt)}</p>
-                      <Link href={`/admin/debts/${d.customerId}`} className="text-[10px] px-2 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-all border border-indigo-500/20">
+                      <Link href={`/admin/customers/${d.customerId}`} className="text-[10px] px-2 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 transition-all border border-indigo-500/20">
                         Xem →
                       </Link>
                     </div>
@@ -188,6 +249,89 @@ export default function DebtsPage() {
           )}
         </>
       )}
+
+      {/* Aging buckets / Tabs */}
+      <div className="flex flex-wrap gap-2.5">
+        <button
+          onClick={() => setActiveOverdueDays(null)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+            activeOverdueDays === null
+              ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/10'
+              : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <span>Tất cả</span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+            activeOverdueDays === null ? 'bg-indigo-700 text-white' : 'bg-white/10 text-slate-400'
+          }`}>
+            {buckets.all.count} ({formatCurrency(buckets.all.sum)})
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveOverdueDays(1)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+            activeOverdueDays === 1
+              ? 'bg-orange-600 border-orange-500 text-white shadow-lg shadow-orange-600/10'
+              : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <span>Quá hạn ≥ 1 ngày</span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+            activeOverdueDays === 1 ? 'bg-orange-700 text-white' : 'bg-white/10 text-slate-400'
+          }`}>
+            {buckets.over1.count} ({formatCurrency(buckets.over1.sum)})
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveOverdueDays(3)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+            activeOverdueDays === 3
+              ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-600/10'
+              : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <span>Quá hạn ≥ 3 ngày</span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+            activeOverdueDays === 3 ? 'bg-amber-700 text-white' : 'bg-white/10 text-slate-400'
+          }`}>
+            {buckets.over3.count} ({formatCurrency(buckets.over3.sum)})
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveOverdueDays(7)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+            activeOverdueDays === 7
+              ? 'bg-rose-600 border-rose-500 text-white shadow-lg shadow-rose-600/10'
+              : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <span>Quá hạn ≥ 7 ngày</span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+            activeOverdueDays === 7 ? 'bg-rose-700 text-white' : 'bg-white/10 text-slate-400'
+          }`}>
+            {buckets.over7.count} ({formatCurrency(buckets.over7.sum)})
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveOverdueDays(30)}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+            activeOverdueDays === 30
+              ? 'bg-rose-700 border-rose-600 text-white shadow-lg shadow-rose-700/10'
+              : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <span>Quá hạn ≥ 30 ngày</span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+            activeOverdueDays === 30 ? 'bg-rose-800 text-white' : 'bg-white/10 text-slate-400'
+          }`}>
+            {buckets.over30.count} ({formatCurrency(buckets.over30.sum)})
+          </span>
+        </button>
+      </div>
 
       {/* Search */}
       <div className="p-4 rounded-2xl bg-[#131722]/50 border border-white/5 flex items-center gap-3">
@@ -214,7 +358,20 @@ export default function DebtsPage() {
           <table className="w-full text-sm text-left">
             <thead>
               <tr className="border-b border-white/5 bg-white/2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                <th className="px-6 py-4">#</th>
+                <th className="px-6 py-4 w-12 text-center">
+                  <input
+                    type="checkbox"
+                    className="rounded bg-white/5 border border-white/10 text-indigo-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                    checked={debts.length > 0 && debts.every(d => selectedCustomerIds.includes(d.customerId))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedCustomerIds(debts.map(d => d.customerId));
+                      } else {
+                        setSelectedCustomerIds([]);
+                      }
+                    }}
+                  />
+                </th>
                 <th className="px-6 py-4">Khách hàng</th>
                 <th className="px-6 py-4 text-right">Số đơn nợ</th>
                 <th className="px-6 py-4 text-right">Tổng tiền nợ</th>
@@ -223,13 +380,29 @@ export default function DebtsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {debts.map((d, idx) => (
+              {debts.map((d) => (
                 <tr key={d.customerId} className="hover:bg-white/2 transition-colors">
-                  <td className="px-6 py-4 text-xs text-slate-500 font-mono">
-                    {(page - 1) * 20 + idx + 1}
+                  <td className="px-6 py-4 w-12 text-center">
+                    <input
+                      type="checkbox"
+                      className="rounded bg-white/5 border border-white/10 text-indigo-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                      checked={selectedCustomerIds.includes(d.customerId)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedCustomerIds(prev => [...prev, d.customerId]);
+                        } else {
+                          setSelectedCustomerIds(prev => prev.filter(id => id !== d.customerId));
+                        }
+                      }}
+                    />
                   </td>
                   <td className="px-6 py-4">
-                    <p className="font-semibold text-white">{d.customerName}</p>
+                    <Link
+                      href={`/admin/customers/${d.customerId}`}
+                      className="font-semibold text-white hover:text-indigo-400 transition-colors"
+                    >
+                      {d.customerName}
+                    </Link>
                     <p className="text-[11px] text-slate-500">{d.customerPhone || '—'}</p>
                   </td>
                   <td className="px-6 py-4 text-right">
@@ -245,7 +418,7 @@ export default function DebtsPage() {
                   </td>
                   <td className="px-6 py-4 text-center">
                     <Link
-                      href={`/admin/debts/${d.customerId}`}
+                      href={`/admin/customers/${d.customerId}`}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all"
                     >
                       <ArrowRight className="w-3.5 h-3.5" />
@@ -285,6 +458,26 @@ export default function DebtsPage() {
             className="px-4 py-2 text-sm font-medium rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all"
           >
             Sau →
+          </button>
+        </div>
+      )}
+
+      {/* Floating Bulk Action Bar */}
+      {selectedCustomerIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-6 py-3.5 rounded-2xl bg-[#131722] border border-indigo-500/30 shadow-2xl animate-slide-up text-white text-xs max-w-[95%]">
+          <span className="font-bold text-indigo-400 border-r border-white/10 pr-3">Đã chọn: {selectedCustomerIds.length} khách</span>
+          <button
+            onClick={handleBulkRemind}
+            disabled={remindLoading}
+            className="px-4 py-2 rounded-lg font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-indigo-600/10"
+          >
+            {remindLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '🔔'} Nhắc thanh toán hàng loạt
+          </button>
+          <button
+            onClick={() => setSelectedCustomerIds([])}
+            className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer ml-1.5"
+          >
+            Bỏ chọn
           </button>
         </div>
       )}

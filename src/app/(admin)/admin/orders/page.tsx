@@ -1,10 +1,12 @@
 import prisma from '@/lib/prisma';
 import OrdersList from './OrdersList';
 import { ShoppingCart } from 'lucide-react';
+import { auth } from '@/lib/auth';
 
 export const revalidate = 0; // Disable cache for fresh admin data
 
 export default async function AdminOrdersPage() {
+  const session = await auth();
   const [orders, customers, services, supplierSources] = await Promise.all([
     prisma.order.findMany({
       orderBy: { createdAt: 'desc' },
@@ -32,6 +34,22 @@ export default async function AdminOrdersPage() {
     prisma.service.findMany({
       where: { isDeleted: false, isActive: true },
       orderBy: { sortOrder: 'asc' },
+      include: {
+        packages: {
+          where: { isDeleted: false, isActive: true },
+          orderBy: { sortOrder: 'asc' },
+          include: {
+            supplierSourceProducts: {
+              where: {
+                supplierSource: {
+                  isDeleted: false,
+                  isActive: true
+                }
+              }
+            }
+          }
+        }
+      }
     }),
     prisma.supplierSource.findMany({
       where: { isDeleted: false, isActive: true },
@@ -56,6 +74,7 @@ export default async function AdminOrdersPage() {
         customers={customers}
         services={services}
         supplierSources={supplierSources}
+        currentUser={session?.user}
       />
     </div>
   );

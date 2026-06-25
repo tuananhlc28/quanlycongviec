@@ -64,7 +64,7 @@ export async function PUT(
 
     const { id } = await params;
     const body = await request.json();
-    const { name, phone, facebook, telegram, zalo, note } = body;
+    const { name, phone, facebook, telegram, zalo, note, tag, status } = body;
 
     if (!name) {
       return NextResponse.json({ error: 'Tên khách hàng là bắt buộc' }, { status: 400 });
@@ -79,6 +79,8 @@ export async function PUT(
         telegram: telegram || null,
         zalo: zalo || null,
         note: note || null,
+        tag: tag || undefined,
+        status: status || undefined,
       },
     });
 
@@ -88,7 +90,7 @@ export async function PUT(
         userId: session.user.id,
         action: 'UPDATE_CUSTOMER',
         target: `Customer:${id}`,
-        details: `Cập nhật thông tin khách hàng: ${name}`,
+        details: `Cập nhật thông tin khách hàng: ${name} (Tag: ${updated.tag}, Trạng thái: ${updated.status})`,
       },
     });
 

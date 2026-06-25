@@ -17,6 +17,27 @@ export default async function AdminCustomersPage() {
     },
   });
 
+  // Fetch renewals count for each customer to pass to the client table
+  const enrichedCustomers = await Promise.all(
+    customers.map(async (c: any) => {
+      const orderIds = c.orders.map((o: any) => o.id);
+      const renewalsCount = await prisma.activityLog.count({
+        where: {
+          OR: [
+            { target: `Customer:${c.id}` },
+            { target: { in: orderIds.map((id: string) => `Order:${id}`) } }
+          ],
+          action: { in: ['RENEW_ORDER', 'BATCH_RENEW', 'RENEW'] }
+        }
+      });
+
+      return {
+        ...c,
+        renewalsCount
+      };
+    })
+  );
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -29,7 +50,7 @@ export default async function AdminCustomersPage() {
         </div>
       </div>
 
-      <CustomersTable initialCustomers={customers} />
+      <CustomersTable initialCustomers={enrichedCustomers} />
     </div>
   );
 }

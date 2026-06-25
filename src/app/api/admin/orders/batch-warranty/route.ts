@@ -57,169 +57,160 @@ export async function POST(request: Request) {
       'change_source': 'Đổi nguồn',
     };
 
-    const successIds: string[] = [];
-    const errors: { orderId: string; orderCode: string; customerName: string; reason: string; action: string }[] = [];
+    // Run the entire batch in a single database transaction for atomic rollback
+    await prisma.$transaction(async (tx: any) => {
+      for (const orderId of orderIds) {
+        const order = await tx.order.findUnique({
+          where: { id: orderId },
+          include: { customer: { select: { name: true } }, refundHistories: true },
+        });
 
-    for (const orderId of orderIds) {
-      let currentOrderCode = 'N/A';
-      let currentCustomerName = 'N/A';
+        if (!order) {
+          throw new Error(`Đơn hàng với ID ${orderId} không tồn tại`);
+        }
 
-      try {
-        await prisma.$transaction(async (tx: any) => {
-          const order = await tx.order.findUnique({
+        if (action === 'change_source' && sourceId) {
+          const source = await tx.supplierSource.findUnique({ where: { id: sourceId } });
+          if (!source) {
+            throw new Error(`Nguồn hàng mới cho đơn ${order.orderCode} không tồn tại`);
+          }
+          await tx.order.update({
             where: { id: orderId },
-            include: { customer: { select: { name: true } }, refundHistories: true },
-          });
-
-          if (!order) {
-            throw new Error('Đơn hàng không tồn tại');
-          }
-
-          currentOrderCode = order.orderCode;
-          currentCustomerName = order.customer?.name || 'N/A';
-
-          if (action === 'change_source' && sourceId) {
-            const source = await tx.supplierSource.findUnique({ where: { id: sourceId } });
-            if (!source) {
-              throw new Error('Nguồn hàng mới không tồn tại');
-            }
-            await tx.order.update({
-              where: { id: orderId },
-              data: {
-                supplierSourceId: sourceId,
-                supplierSourceName: source.name,
-              },
-            });
-          } else if (statusMap[action]) {
-            const noteAppend = note ? `\n[Batch ${actionLabels[action]}]: ${note}` : '';
-
-            // Check refund history requirement for status updates
-            const isStatusUpdate = ['pending_source', 'pending_refund', 'done', 'rejected'].includes(action);
-            const latestRefund = order.refundHistories
-              .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-
-            if (isStatusUpdate && !latestRefund) {
-              throw new Error('Chưa tạo yêu cầu hoàn tiền cho đơn hàng này. Vui lòng tạo yêu cầu hoàn tiền trước.');
-            }
-
-            await tx.order.update({
-              where: { id: orderId },
-              data: {
-                status: statusMap[action],
-                note: `${order.note || ''}${noteAppend}`.trim(),
-              },
-            });
-
-            // For report_error, also create a refund history record with auto-calculated amounts
-            if (action === 'report_error') {
-              const start = new Date(order.startDate);
-              const now = new Date();
-              const totalDays = order.durationDays || 30;
-              const diffTime = now.getTime() - start.getTime();
-              let daysUsed = Math.floor(diffTime / (24 * 60 * 60 * 1000));
-              if (daysUsed < 0) daysUsed = 0;
-              if (daysUsed > totalDays) daysUsed = totalDays;
-              const daysRemaining = totalDays - daysUsed;
-              const costPerDay = order.salePrice / totalDays;
-              const refundAmount = Math.round(daysRemaining * costPerDay);
-              const supplierCostPerDay = order.costPrice / totalDays;
-              const sourceRefundExpected = Math.round(daysRemaining * supplierCostPerDay);
-
-              await tx.refundHistory.create({
-                data: {
-                  orderId,
-                  amount: refundAmount,
-                  autoRefundAmount: refundAmount,
-                  daysUsed,
-                  daysRemaining,
-                  costPerDay,
-                  errorDate: now,
-                  operatorName: session.user.name || 'Hệ thống',
-                  note: note || 'Báo lỗi hàng loạt',
-                  sourceRefundExpected,
-                  sourceRefundActual: sourceRefundExpected,
-                  sourceStatus: 'PENDING',
-                  netProfitAfterRefund: order.salePrice - order.costPrice - refundAmount + sourceRefundExpected,
-                },
-              });
-            }
-
-            if (latestRefund) {
-              if (action === 'pending_refund') {
-                const finalSourceRefund = latestRefund.sourceRefundActual || latestRefund.sourceRefundExpected;
-                await tx.refundHistory.update({
-                  where: { id: latestRefund.id },
-                  data: {
-                    sourceStatus: 'REFUNDED',
-                    sourceRefundActual: finalSourceRefund,
-                  },
-                });
-              } else if (action === 'done') {
-                const finalAmount = latestRefund.amount || latestRefund.autoRefundAmount;
-                const finalSourceRefund = latestRefund.sourceRefundActual || latestRefund.sourceRefundExpected;
-                const netProfit = order.salePrice - order.costPrice - finalAmount + finalSourceRefund;
-
-                await tx.refundHistory.update({
-                  where: { id: latestRefund.id },
-                  data: {
-                    amount: finalAmount,
-                    sourceRefundActual: finalSourceRefund,
-                    netProfitAfterRefund: netProfit,
-                  },
-                });
-
-                await tx.order.update({
-                  where: { id: orderId },
-                  data: { profit: netProfit },
-                });
-              } else if (action === 'rejected') {
-                const finalAmount = latestRefund.amount || latestRefund.autoRefundAmount;
-                const netProfit = order.salePrice - order.costPrice - finalAmount;
-
-                await tx.refundHistory.update({
-                  where: { id: latestRefund.id },
-                  data: {
-                    sourceStatus: 'REJECTED',
-                    sourceRefundActual: 0,
-                    amount: finalAmount,
-                    netProfitAfterRefund: netProfit,
-                  },
-                });
-
-                await tx.order.update({
-                  where: { id: orderId },
-                  data: { profit: netProfit },
-                });
-              }
-            }
-          }
-
-          await tx.activityLog.create({
             data: {
-              userId: logUserId,
-              action: `BATCH_${action.toUpperCase()}`,
-              target: `Order:${orderId}`,
-              details: `Thao tác hàng loạt: ${actionLabels[action]}.${note ? ' Ghi chú: ' + note : ''}`,
+              supplierSourceId: sourceId,
+              supplierSourceName: source.name,
             },
           });
-        });
-        successIds.push(orderId);
-      } catch (err: any) {
-        errors.push({
-          orderId,
-          orderCode: currentOrderCode,
-          customerName: currentCustomerName,
-          reason: err.message || 'Lỗi không xác định',
-          action,
+        } else if (statusMap[action]) {
+          const noteAppend = note ? `\n[Batch ${actionLabels[action]}]: ${note}` : '';
+
+          // Check refund history requirement for status updates
+          const isStatusUpdate = ['pending_source', 'pending_refund', 'done', 'rejected'].includes(action);
+          const latestRefund = order.refundHistories
+            .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+          if (isStatusUpdate && !latestRefund) {
+            throw new Error(`Đơn ${order.orderCode} chưa tạo yêu cầu hoàn tiền. Vui lòng tạo yêu cầu hoàn tiền trước.`);
+          }
+
+          await tx.order.update({
+            where: { id: orderId },
+            data: {
+              status: statusMap[action],
+              note: `${order.note || ''}${noteAppend}`.trim(),
+            },
+          });
+
+          // For report_error, also create a refund history record with auto-calculated amounts (warranty ticket)
+          if (action === 'report_error') {
+            const start = new Date(order.startDate);
+            const now = new Date();
+            const totalDays = order.durationDays || 30;
+            const diffTime = now.getTime() - start.getTime();
+            let daysUsed = Math.floor(diffTime / (24 * 60 * 60 * 1000));
+            if (daysUsed < 0) daysUsed = 0;
+            if (daysUsed > totalDays) daysUsed = totalDays;
+            const daysRemaining = totalDays - daysUsed;
+            const costPerDay = order.salePrice / totalDays;
+            const refundAmount = Math.round(daysRemaining * costPerDay);
+            const supplierCostPerDay = order.costPrice / totalDays;
+            const sourceRefundExpected = Math.round(daysRemaining * supplierCostPerDay);
+
+            await tx.refundHistory.create({
+              data: {
+                orderId,
+                amount: refundAmount,
+                autoRefundAmount: refundAmount,
+                daysUsed,
+                daysRemaining,
+                costPerDay,
+                errorDate: now,
+                operatorName: session.user.name || 'Hệ thống',
+                note: note || 'Báo lỗi hàng loạt',
+                sourceRefundExpected,
+                sourceRefundActual: sourceRefundExpected,
+                sourceStatus: 'PENDING',
+                netProfitAfterRefund: order.salePrice - order.costPrice - refundAmount + sourceRefundExpected,
+              },
+            });
+
+            await tx.order.update({
+              where: { id: orderId },
+              data: {
+                profit: order.salePrice - order.costPrice - refundAmount + sourceRefundExpected,
+              },
+            });
+          }
+
+          if (latestRefund) {
+            if (action === 'pending_refund') {
+              const finalSourceRefund = latestRefund.sourceRefundActual || latestRefund.sourceRefundExpected;
+              const netProfit = order.salePrice - order.costPrice - latestRefund.amount + finalSourceRefund;
+              await tx.refundHistory.update({
+                where: { id: latestRefund.id },
+                data: {
+                  sourceStatus: 'REFUNDED',
+                  sourceRefundActual: finalSourceRefund,
+                },
+              });
+              await tx.order.update({
+                where: { id: orderId },
+                data: { profit: netProfit },
+              });
+            } else if (action === 'done') {
+              const finalAmount = latestRefund.amount || latestRefund.autoRefundAmount;
+              const finalSourceRefund = latestRefund.sourceRefundActual || latestRefund.sourceRefundExpected;
+              const netProfit = order.salePrice - order.costPrice - finalAmount + finalSourceRefund;
+
+              await tx.refundHistory.update({
+                where: { id: latestRefund.id },
+                data: {
+                  amount: finalAmount,
+                  sourceRefundActual: finalSourceRefund,
+                  netProfitAfterRefund: netProfit,
+                },
+              });
+
+              await tx.order.update({
+                where: { id: orderId },
+                data: { profit: netProfit },
+              });
+            } else if (action === 'rejected') {
+              const finalAmount = latestRefund.amount || latestRefund.autoRefundAmount;
+              const netProfit = order.salePrice - order.costPrice - finalAmount;
+
+              await tx.refundHistory.update({
+                where: { id: latestRefund.id },
+                data: {
+                  sourceStatus: 'REJECTED',
+                  sourceRefundActual: 0,
+                  amount: finalAmount,
+                  netProfitAfterRefund: netProfit,
+                },
+              });
+
+              await tx.order.update({
+                where: { id: orderId },
+                data: { profit: netProfit },
+              });
+            }
+          }
+        }
+
+        await tx.activityLog.create({
+          data: {
+            userId: logUserId,
+            action: `BATCH_${action.toUpperCase()}`,
+            target: `Order:${orderId}`,
+            details: `Thao tác hàng loạt: ${actionLabels[action]}.${note ? ' Ghi chú: ' + note : ''}`,
+          },
         });
       }
-    }
+    });
 
     return NextResponse.json({
-      success: successIds.length,
-      failed: errors.length,
-      total: orderIds.length,
-      errors,
+      success: true,
+      message: `Thao tác hàng loạt thành công cho ${orderIds.length} tài khoản`,
     });
   } catch (error: any) {
     console.error('Batch warranty API error:', error);

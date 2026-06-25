@@ -106,6 +106,10 @@ export const CUSTOMER_TAGS = {
   NEW: 'NEW',
   REGULAR: 'REGULAR',
   VIP: 'VIP',
+  DAI_LY: 'DAI_LY',
+  SPAM: 'SPAM',
+  KHACH_NO: 'KHACH_NO',
+  THAN_THIET: 'THAN_THIET',
   INACTIVE_30: 'INACTIVE_30',
   INACTIVE_60: 'INACTIVE_60',
   INACTIVE_90: 'INACTIVE_90',
@@ -115,6 +119,10 @@ export const CUSTOMER_TAG_CONFIG: Record<string, { label: string; emoji: string;
   NEW: { label: 'Mới', emoji: '🟢', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
   REGULAR: { label: 'Quen', emoji: '🔵', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
   VIP: { label: 'VIP', emoji: '🟣', color: 'bg-purple-500/10 text-purple-400 border-purple-500/20' },
+  DAI_LY: { label: 'Đại lý', emoji: '💼', color: 'bg-teal-500/10 text-teal-400 border-teal-500/20' },
+  SPAM: { label: 'Spam', emoji: '⚠️', color: 'bg-red-600/10 text-red-500 border-red-600/20' },
+  KHACH_NO: { label: 'Khách nợ', emoji: '💸', color: 'bg-rose-500/10 text-rose-400 border-rose-500/20' },
+  THAN_THIET: { label: 'Thân thiết', emoji: '❤️', color: 'bg-pink-500/10 text-pink-400 border-pink-500/20' },
   INACTIVE_30: { label: '30N', emoji: '🟠', color: 'bg-orange-500/10 text-orange-400 border-orange-500/20' },
   INACTIVE_60: { label: '60N', emoji: '🔴', color: 'bg-red-500/10 text-red-400 border-red-500/20' },
   INACTIVE_90: { label: '90N', emoji: '⚫', color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
@@ -122,19 +130,21 @@ export const CUSTOMER_TAG_CONFIG: Record<string, { label: string; emoji: string;
 
 // #67 - Credit ratings
 export const CREDIT_RATINGS = {
-  A_PLUS: 'A_PLUS',
+  S: 'S',
   A: 'A',
   B: 'B',
   C: 'C',
   D: 'D',
+  NEW: 'NEW',
 } as const;
 
 export const CREDIT_RATING_CONFIG: Record<string, { label: string; color: string }> = {
-  A_PLUS: { label: 'A+', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
-  A: { label: 'A', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
-  B: { label: 'B', color: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
-  C: { label: 'C', color: 'bg-orange-500/10 text-orange-400 border-orange-500/20' },
-  D: { label: 'D', color: 'bg-red-500/10 text-red-400 border-red-500/20' },
+  S: { label: 'S (Xuất sắc)', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 font-bold' },
+  A: { label: 'A (Tốt)', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
+  B: { label: 'B (Trung bình)', color: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
+  C: { label: 'C (Yêu)', color: 'bg-orange-500/10 text-orange-400 border-orange-500/20' },
+  D: { label: 'D (Tệ)', color: 'bg-red-500/10 text-red-400 border-red-500/20' },
+  NEW: { label: 'NEW (Mới)', color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
 };
 
 export const PAYMENT_METHODS = {

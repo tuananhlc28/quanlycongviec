@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { updateCustomerStats } from '@/lib/crm';
 
 export async function GET(request: Request) {
   try {
@@ -246,6 +247,9 @@ export async function POST(request: Request) {
 
       return ord;
     });
+
+    // Recalculate customer statistics automatically
+    await updateCustomerStats(customerId);
 
     return NextResponse.json(order);
   } catch (error: any) {

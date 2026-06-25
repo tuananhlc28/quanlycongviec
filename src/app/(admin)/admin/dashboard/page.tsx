@@ -1178,7 +1178,9 @@ export default async function AdminDashboard() {
                       {idx + 1}
                     </span>
                     <div>
-                      <p className="font-semibold text-white">{c.name}</p>
+                      <Link href={`/admin/customers/${c.id}`} className="font-semibold text-white hover:text-indigo-400 transition-all">
+                        {c.name}
+                      </Link>
                       {c.phone && <p className="text-[10px] text-slate-500">{c.phone}</p>}
                     </div>
                   </div>
@@ -1204,7 +1206,9 @@ export default async function AdminDashboard() {
                       {idx + 1}
                     </span>
                     <div>
-                      <p className="font-semibold text-white">{c.name}</p>
+                      <Link href={`/admin/customers/${c.id}`} className="font-semibold text-white hover:text-indigo-400 transition-all">
+                        {c.name}
+                      </Link>
                       {c.phone && <p className="text-[10px] text-slate-500">{c.phone}</p>}
                     </div>
                   </div>
@@ -1250,7 +1254,15 @@ export default async function AdminDashboard() {
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>{order.customer?.name} ({order.packageName})</span>
+                    <span>
+                      {order.customer?.id ? (
+                        <Link href={`/admin/customers/${order.customer.id}`} className="hover:text-indigo-400 font-semibold transition-colors">
+                          {order.customer.name}
+                        </Link>
+                      ) : (
+                        order.customer?.name || 'N/A'
+                      )} ({order.packageName})
+                    </span>
                     <span className="font-mono text-slate-500">Hạn: {formatDate(order.endDate)}</span>
                   </div>
                 </div>
@@ -1274,13 +1286,14 @@ export default async function AdminDashboard() {
           </div>
           <div className="space-y-3">
             {data.recentOrders.map((order: any) => (
-              <Link
+              <div
                 key={order.id}
-                href={`/admin/orders/${order.id}`}
-                className="block p-3 rounded-xl bg-white/5 border border-white/3 hover:border-white/10 transition-all text-xs"
+                className="p-3 rounded-xl bg-white/5 border border-white/3 hover:border-white/10 transition-all text-xs"
               >
                 <div className="flex justify-between items-start">
-                  <span className="font-bold text-indigo-400 font-mono">{order.orderCode}</span>
+                  <Link href={`/admin/orders/${order.id}`} className="font-bold text-indigo-400 font-mono hover:underline">
+                    {order.orderCode}
+                  </Link>
                   <span className="text-[10px] text-slate-500">{formatDate(order.createdAt)}</span>
                 </div>
                 <div className="flex items-center justify-between mt-2">
@@ -1288,7 +1301,13 @@ export default async function AdminDashboard() {
                     <span className="text-lg">{order.service?.logo || '🔑'}</span>
                     <div>
                       <p className="font-semibold text-white">{order.service?.name}</p>
-                      <p className="text-[10px] text-slate-400">{order.customer?.name}</p>
+                      {order.customer?.id ? (
+                        <Link href={`/admin/customers/${order.customer.id}`} className="text-[10px] text-slate-400 hover:text-indigo-400 transition-all">
+                          {order.customer.name}
+                        </Link>
+                      ) : (
+                        <p className="text-[10px] text-slate-400">{order.customer?.name || 'N/A'}</p>
+                      )}
                     </div>
                   </div>
                   <div className="text-right">
@@ -1306,7 +1325,7 @@ export default async function AdminDashboard() {
                     </span>
                   </div>
                 </div>
-              </Link>
+              </div>
             ))}
             {data.recentOrders.length === 0 && (
               <p className="text-xs text-slate-500 text-center py-6">Chưa có đơn hàng nào</p>

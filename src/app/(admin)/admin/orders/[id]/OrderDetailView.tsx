@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -141,6 +141,25 @@ export default function OrderDetailView({
 }: OrderDetailViewProps) {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
+
+  const clickTimeoutRef = useRef<any>(null);
+  const handleEmailClick = (e: React.MouseEvent, email: string, password?: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+      const copyText = password ? `${email}\n${password}` : email;
+      navigator.clipboard.writeText(copyText);
+      toast.success('Đã sao chép Email + Password.');
+    } else {
+      clickTimeoutRef.current = setTimeout(() => {
+        clickTimeoutRef.current = null;
+        navigator.clipboard.writeText(email);
+        toast.success('Đã sao chép Email.');
+      }, 250);
+    }
+  };
 
   const handleUpdatePaymentStatus = async (newStatus: string) => {
     const loadingToast = toast.loading('Đang cập nhật trạng thái thanh toán...');
@@ -630,9 +649,19 @@ export default function OrderDetailView({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <span className="text-xs text-slate-500 block">Email tài khoản</span>
-                  <strong className="text-sm text-white block mt-1 select-all font-mono">
-                    {order.accountEmail || '—'}
-                  </strong>
+                  {order.accountEmail ? (
+                    <button
+                      onClick={(e) => handleEmailClick(e, order.accountEmail!, order.accountPassword || undefined)}
+                      className="text-sm text-indigo-400 hover:text-indigo-300 hover:underline mt-1 block select-all font-mono font-bold text-left cursor-pointer focus:outline-none"
+                      title="Click 1 lần để copy Email, double click để copy Email + Password"
+                    >
+                      {order.accountEmail}
+                    </button>
+                  ) : (
+                    <strong className="text-sm text-slate-500 block mt-1 font-mono">
+                      —
+                    </strong>
+                  )}
                 </div>
                 <div>
                   <span className="text-xs text-slate-500 block">Mật khẩu</span>
@@ -699,7 +728,12 @@ export default function OrderDetailView({
                   {order.service.logo || '🔑'}
                 </div>
                 <div>
-                  <h4 className="text-base font-bold text-white">{order.service.name}</h4>
+                  <Link
+                    href={`/admin/orders?serviceId=${order.service.id}`}
+                    className="text-base font-bold text-white hover:text-indigo-400 hover:underline transition-colors block"
+                  >
+                    {order.service.name}
+                  </Link>
                   <p className="text-xs text-slate-400 mt-1">Gói: <strong className="text-indigo-300">{order.packageName}</strong></p>
                 </div>
               </div>
@@ -817,7 +851,12 @@ export default function OrderDetailView({
                 {order.customer.name.charAt(0).toUpperCase()}
               </div>
               <div>
-                <p className="text-sm font-bold text-white">{order.customer.name}</p>
+                <Link
+                  href={`/admin/customers/${order.customer.id}`}
+                  className="text-sm font-bold text-white hover:text-indigo-400 hover:underline transition-colors block"
+                >
+                  {order.customer.name}
+                </Link>
                 <p className="text-[10px] text-slate-500 font-mono">ID: {order.customer.id}</p>
               </div>
             </div>

@@ -330,16 +330,45 @@ export function calculateCreditRating(stats: {
   latePaymentCount: number;
   currentDebtCount: number;
   totalSpend: number;
+  daysSinceCreated?: number;
+  renewalsCount?: number;
+  warrantyCount?: number;
+  totalRefund?: number;
 }): string {
-  const { totalOrders, paidOnTimeCount, latePaymentCount, currentDebtCount } = stats;
-  if (totalOrders === 0) return 'B'; // Default for new customers
+  const { 
+    totalOrders, 
+    paidOnTimeCount, 
+    latePaymentCount, 
+    currentDebtCount, 
+    totalSpend, 
+    daysSinceCreated = 0, 
+    renewalsCount = 0, 
+    warrantyCount = 0, 
+    totalRefund = 0 
+  } = stats;
+  
+  if (totalOrders === 0) return 'NEW';
 
   const onTimeRate = paidOnTimeCount / totalOrders;
-  
-  if (onTimeRate >= 0.95 && currentDebtCount === 0 && latePaymentCount <= 1) return 'A_PLUS';
-  if (onTimeRate >= 0.85 && currentDebtCount <= 1) return 'A';
-  if (onTimeRate >= 0.7 && currentDebtCount <= 2) return 'B';
-  if (onTimeRate >= 0.5) return 'C';
+  const refundRate = totalSpend > 0 ? (totalRefund / totalSpend) : 0;
+
+  // Formula matching crm.ts
+  let score = 75; // base
+  score += Math.min(15, totalSpend / 200000);
+  score += onTimeRate * 15;
+  score -= currentDebtCount * 5;
+  score -= latePaymentCount * 2;
+  score += Math.min(10, renewalsCount * 2.5);
+  score -= Math.min(15, warrantyCount * 3);
+  score -= Math.min(15, refundRate * 100);
+  score += Math.min(10, daysSinceCreated / 30);
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+
+  if (score >= 95) return 'S';
+  if (score >= 85) return 'A';
+  if (score >= 70) return 'B';
+  if (score >= 50) return 'C';
   return 'D';
 }
 
@@ -350,15 +379,16 @@ export function calculateCreditRating(stats: {
 export function calculateCustomerTag(stats: {
   orderCount: number;
   daysSinceLastOrder: number | null;
+  totalSpend?: number;
 }): string {
-  const { orderCount, daysSinceLastOrder } = stats;
+  const { orderCount, daysSinceLastOrder, totalSpend = 0 } = stats;
 
-  if (daysSinceLastOrder === null) return 'NEW'; // No orders yet
+  if (daysSinceLastOrder === null) return 'NEW';
 
   if (daysSinceLastOrder >= 90) return 'INACTIVE_90';
   if (daysSinceLastOrder >= 60) return 'INACTIVE_60';
   if (daysSinceLastOrder >= 30) return 'INACTIVE_30';
-  if (orderCount >= 5) return 'VIP';
+  if (totalSpend >= 5000000 || orderCount >= 5) return 'VIP';
   if (orderCount >= 2) return 'REGULAR';
   return 'NEW';
 }

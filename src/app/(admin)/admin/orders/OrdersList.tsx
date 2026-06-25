@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Search, Plus, Download, X, Eye, EyeOff, Edit2, Calendar, DollarSign, Plug, Sparkles, Loader2, ArrowRight, ShoppingCart, ShieldAlert, RotateCcw, AlertTriangle, CheckCircle2, MessageCircle, ExternalLink, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatCurrency, formatDate, getStatusColor, getStatusLabel, getPaymentStatusColor, getPaymentStatusLabel } from '@/lib/utils';
 import AdvancedFilter from '@/components/shared/AdvancedFilter';
+import CountdownBadge from '@/components/shared/CountdownBadge';
 
 interface Customer {
   id: string;
@@ -23,6 +24,27 @@ interface Customer {
   }[];
 }
 
+interface SupplierSourceProduct {
+  id: string;
+  supplierSourceId: string;
+  packageId: string;
+  costPrice: number;
+  stock: number;
+  deliveryMethod: string;
+}
+
+interface ServicePackage {
+  id: string;
+  serviceId: string;
+  name: string;
+  durationDays: number;
+  salePrice: number;
+  description: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  supplierSourceProducts?: SupplierSourceProduct[];
+}
+
 interface Service {
   id: string;
   name: string;
@@ -31,6 +53,7 @@ interface Service {
   defaultSalePrice?: number;
   defaultCostPrice?: number;
   defaultDurationDays?: number;
+  packages?: ServicePackage[];
 }
 
 interface SupplierSource {
@@ -84,6 +107,7 @@ interface OrdersListProps {
   customers: Customer[];
   services: Service[];
   supplierSources: SupplierSource[];
+  currentUser?: any;
 }
 
 export default function OrdersList({
@@ -91,9 +115,29 @@ export default function OrdersList({
   customers,
   services,
   supplierSources,
+  currentUser,
 }: OrdersListProps) {
   const router = useRouter();
   const [orders, setOrders] = useState<OrderRow[]>(initialOrders);
+
+  const clickTimeoutRef = useRef<any>(null);
+  const handleEmailClick = (e: React.MouseEvent, email: string, password?: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+      const copyText = password ? `${email}\n${password}` : email;
+      navigator.clipboard.writeText(copyText);
+      toast.success('Đã sao chép Email + Password');
+    } else {
+      clickTimeoutRef.current = setTimeout(() => {
+        clickTimeoutRef.current = null;
+        navigator.clipboard.writeText(email);
+        toast.success('Đã sao chép Email');
+      }, 250);
+    }
+  };
 
   useEffect(() => {
     setOrders(initialOrders);
@@ -297,6 +341,57 @@ export default function OrdersList({
     total: number;
     errors: any[];
   } | null>(null);
+
+  // Batch refund preview modal
+  const [batchRefundModalOpen, setBatchRefundModalOpen] = useState(false);
+  const [batchRefundErrorDate, setBatchRefundErrorDate] = useState(new Date().toISOString().split('T')[0]);
+  const [batchRefundReason, setBatchRefundReason] = useState('Hoàn tiền hàng loạt');
+
+  const batchRefundPreviews = useMemo(() => {
+    if (selectedOrderIds.length === 0) return { list: [], totalClientRefund: 0, totalSourceRefund: 0, totalProfitAfter: 0 };
+    const selectedOrders = orders.filter(o => selectedOrderIds.includes(o.id));
+    const faultDate = new Date(batchRefundErrorDate);
+
+    let totalClientRefund = 0;
+    let totalSourceRefund = 0;
+    let totalProfitAfter = 0;
+
+    const list = selectedOrders.map(o => {
+      const start = new Date(o.startDate);
+      const totalDays = o.durationDays || 30;
+      const diffTime = faultDate.getTime() - start.getTime();
+      let daysUsed = Math.floor(diffTime / (24 * 60 * 60 * 1000));
+      if (daysUsed < 0) daysUsed = 0;
+      if (daysUsed > totalDays) daysUsed = totalDays;
+
+      const daysRemaining = totalDays - daysUsed;
+      const clientRefund = Math.round((o.salePrice / totalDays) * daysRemaining);
+      const sourceRefund = Math.round((o.costPrice / totalDays) * daysRemaining);
+      const profitAfter = o.salePrice - o.costPrice - clientRefund + sourceRefund;
+
+      totalClientRefund += clientRefund;
+      totalSourceRefund += sourceRefund;
+      totalProfitAfter += profitAfter;
+
+      return {
+        id: o.id,
+        orderCode: o.orderCode,
+        customerName: o.customer?.name || 'N/A',
+        salePrice: o.salePrice,
+        costPrice: o.costPrice,
+        clientRefund,
+        sourceRefund,
+        profitAfter,
+      };
+    });
+
+    return {
+      list,
+      totalClientRefund,
+      totalSourceRefund,
+      totalProfitAfter,
+    };
+  }, [selectedOrderIds, orders, batchRefundErrorDate]);
 
   const handleToggleAll = () => {
     const pageOrderIds = paginatedOrders.map(o => o.id);
@@ -1008,7 +1103,13 @@ export default function OrdersList({
                   {/* Khách hàng */}
                   <td className="px-6 py-4">
                     <div>
-                      <p className="font-bold text-white text-sm">{o.customer?.name}</p>
+                      {o.customer?.id ? (
+                        <Link href={`/admin/customers/${o.customer.id}`} className="font-bold text-white hover:text-indigo-400 transition-colors text-sm">
+                          {o.customer.name}
+                        </Link>
+                      ) : (
+                        <p className="font-bold text-white text-sm">{o.customer?.name || 'N/A'}</p>
+                      )}
                       <p className="text-[11px] text-slate-500 mt-0.5">{o.customer?.phone || 'No phone'}</p>
                     </div>
                   </td>
@@ -1018,7 +1119,12 @@ export default function OrdersList({
                     <div className="flex items-center gap-2">
                       <span className="text-xl">{o.service?.logo || '🔑'}</span>
                       <div>
-                        <p className="font-semibold text-white">{o.service?.name}</p>
+                        <button
+                          onClick={() => setSelectedService(o.serviceId)}
+                          className="font-semibold text-white hover:text-indigo-400 hover:underline text-left cursor-pointer focus:outline-none"
+                        >
+                          {o.service?.name}
+                        </button>
                         <p className="text-xs text-slate-500">{o.packageName}</p>
                       </div>
                     </div>
@@ -1028,7 +1134,13 @@ export default function OrdersList({
                   <td className="px-6 py-4">
                     {o.accountEmail ? (
                       <div className="space-y-1 text-xs max-w-[200px]">
-                        <p className="font-medium text-slate-300 truncate">{o.accountEmail}</p>
+                        <button
+                          onClick={(e) => handleEmailClick(e, o.accountEmail!, o.accountPassword || undefined)}
+                          className="font-medium text-indigo-400 hover:underline truncate block text-left cursor-pointer focus:outline-none w-full"
+                          title="Click 1 lần để copy Email, double click để copy Email + Password"
+                        >
+                          {o.accountEmail}
+                        </button>
                         <div className="flex items-center gap-1.5 text-slate-500">
                           <span className="font-mono">
                             {visiblePasswords[o.id] ? o.accountPassword : '••••••••'}
@@ -1057,11 +1169,9 @@ export default function OrdersList({
 
                   {/* Thời hạn */}
                   <td className="px-6 py-4 text-xs">
-                    <div>
-                      <p className={`font-semibold ${remaining <= 3 ? 'text-rose-400' : 'text-slate-300'}`}>
-                        {remainingLabel}
-                      </p>
-                      <p className="text-[10px] text-slate-500 mt-1">Hạn: {formatDate(o.endDate)}</p>
+                    <div className="space-y-1 flex flex-col items-start">
+                      <CountdownBadge endDate={o.endDate} status={o.status} />
+                      <p className="text-[10px] text-slate-500">Hạn: {formatDate(o.endDate)}</p>
                     </div>
                   </td>
 
@@ -1247,18 +1357,7 @@ export default function OrdersList({
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => {
-                const note = prompt('Nhập lý do yêu cầu hoàn tiền hàng loạt (tùy chọn):');
-                if (note !== null) {
-                  handleBatchAction('CREATE_REFUND_REQUEST', { note });
-                }
-              }}
-              disabled={batchLoading}
-              className="px-2.5 py-1.5 rounded-lg font-semibold bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border border-orange-500/20 transition-all cursor-pointer"
-            >
-              💸 Yêu cầu hoàn tiền
-            </button>
+
             <button
               onClick={() => {
                 const note = prompt('Nhập lý do báo lỗi hàng loạt (tùy chọn):');
@@ -1270,6 +1369,13 @@ export default function OrdersList({
               className="px-2.5 py-1.5 rounded-lg font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all cursor-pointer"
             >
               🚨 Báo sự cố hàng loạt
+            </button>
+            <button
+              onClick={() => setBatchRefundModalOpen(true)}
+              disabled={batchLoading}
+              className="px-2.5 py-1.5 rounded-lg font-semibold bg-rose-600/20 hover:bg-rose-600/35 text-rose-300 border border-rose-500/30 transition-all cursor-pointer"
+            >
+              💸 Hoàn tiền hàng loạt
             </button>
             <button
               onClick={() => setBatchSourceModalOpen(true)}
@@ -1301,6 +1407,116 @@ export default function OrdersList({
             >
               📥 Xuất Excel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL: BATCH REFUND WITH PREVIEW --- */}
+      {batchRefundModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="relative w-full max-w-4xl p-6 rounded-2xl bg-[#131722] border border-white/10 shadow-2xl text-white text-xs max-h-[85vh] flex flex-col animate-fade-in animate-slide-up">
+            <button onClick={() => setBatchRefundModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X className="w-4 h-4" /></button>
+            
+            <h2 className="text-base font-bold text-white mb-2 flex items-center gap-2">
+              <span>💸 Hoàn tiền hàng loạt ({selectedOrderIds.length} đơn)</span>
+            </h2>
+            <p className="text-slate-400 mb-4">Nhập thông tin sự cố và xem trước bảng tính tiền hoàn trả trước khi lưu.</p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-slate-400 mb-1.5 font-semibold uppercase tracking-wider">Lý do lỗi / hoàn tiền *</label>
+                <input
+                  type="text"
+                  required
+                  value={batchRefundReason}
+                  onChange={e => setBatchRefundReason(e.target.value)}
+                  placeholder="Sai mật khẩu, tài khoản lỗi..."
+                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-400 mb-1.5 font-semibold uppercase tracking-wider">Ngày xảy ra sự cố *</label>
+                <input
+                  type="date"
+                  required
+                  value={batchRefundErrorDate}
+                  onChange={e => setBatchRefundErrorDate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Preview Table */}
+            <div className="flex-1 overflow-auto rounded-xl border border-white/5 bg-[#131722]/30 mb-4">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-white/5 bg-white/2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    <th className="px-4 py-3">Mã đơn</th>
+                    <th className="px-4 py-3">Khách hàng</th>
+                    <th className="px-4 py-3 text-right">Giá bán</th>
+                    <th className="px-4 py-3 text-right">Giá vốn</th>
+                    <th className="px-4 py-3 text-right text-rose-400 font-bold">Hoàn khách</th>
+                    <th className="px-4 py-3 text-right text-emerald-400 font-bold">Nguồn hoàn</th>
+                    <th className="px-4 py-3 text-right">Lãi sau hoàn</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {batchRefundPreviews.list.map(p => (
+                    <tr key={p.id} className="hover:bg-white/2 transition-colors">
+                      <td className="px-4 py-2.5 font-bold text-indigo-400">{p.orderCode}</td>
+                      <td className="px-4 py-2.5 text-slate-300 font-medium">{p.customerName}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-slate-400">{formatCurrency(p.salePrice)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-slate-500">{formatCurrency(p.costPrice)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono font-bold text-rose-400">{formatCurrency(p.clientRefund)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono font-bold text-emerald-400">+{formatCurrency(p.sourceRefund)}</td>
+                      <td className={`px-4 py-2.5 text-right font-mono font-bold ${p.profitAfter >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {formatCurrency(p.profitAfter)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Aggregated totals */}
+            <div className="grid grid-cols-3 gap-3.5 mb-4 p-4 rounded-xl bg-white/2 border border-white/5 text-center">
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Tổng hoàn khách</span>
+                <span className="text-sm font-black text-rose-400 font-mono mt-1 block">{formatCurrency(batchRefundPreviews.totalClientRefund)}</span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Tổng nguồn hoàn</span>
+                <span className="text-sm font-black text-emerald-400 font-mono mt-1 block">+{formatCurrency(batchRefundPreviews.totalSourceRefund)}</span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Lợi nhuận sau hoàn</span>
+                <span className={`text-sm font-black font-mono mt-1 block ${batchRefundPreviews.totalProfitAfter >= 0 ? 'text-cyan-400' : 'text-rose-400'}`}>
+                  {formatCurrency(batchRefundPreviews.totalProfitAfter)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-3 border-t border-white/5">
+              <button
+                type="button"
+                onClick={() => setBatchRefundModalOpen(false)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-slate-400 border border-white/5 hover:bg-white/5 transition-all"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => handleBatchAction('BATCH_REFUND', {
+                  errorDate: batchRefundErrorDate,
+                  reason: batchRefundReason,
+                })}
+                disabled={batchLoading || !batchRefundReason}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-500 transition-all cursor-pointer shadow-lg shadow-rose-600/10"
+              >
+                {batchLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                Xác nhận hoàn tiền
+              </button>
+            </div>
           </div>
         </div>
       )}

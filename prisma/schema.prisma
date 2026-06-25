@@ -38,8 +38,9 @@ model Customer {
   telegram       String?
   zalo           String?
   note           String?
-  tag            String           @default("NEW") // NEW, REGULAR, VIP, INACTIVE_30, INACTIVE_60, INACTIVE_90
-  creditRating   String           @default("B") // A_PLUS, A, B, C, D
+  tag            String           @default("NEW") // NEW, REGULAR, VIP, DAI_LY, SPAM, KHACH_NO, THAN_THIET, INACTIVE_30, INACTIVE_60, INACTIVE_90
+  creditRating   String           @default("B") // S, A, B, C, D, NEW
+  status         String           @default("ACTIVE") // ACTIVE (Hoạt động), LOCKED (Tạm khóa), VIP (VIP)
   isDeleted      Boolean          @default(false)
   deletedAt      DateTime?
   orders         Order[]
@@ -52,26 +53,49 @@ model Customer {
 }
 
 // ==========================================
-// Services (Simplified)
+// Services & Packages
 // ==========================================
 
 model Service {
-  id                  String    @id @default(cuid())
+  id                  String           @id @default(cuid())
   name                String
-  slug                String    @unique
-  logo                String?   // Emoji or icon name or URL
+  slug                String           @unique
+  logo                String?          // Emoji or icon name or URL
   description         String?
-  serviceType         String?   @default("") // Loại dịch vụ (e.g. Canva, ChatGPT, v.v.)
-  defaultSalePrice    Float     @default(0) // Giá bán mặc định
-  defaultCostPrice    Float     @default(0) // Giá vốn mặc định
-  defaultDurationDays Int       @default(30) // Thời hạn mặc định (30, 60, 90, 180, 365)
-  isActive            Boolean   @default(true)
-  sortOrder           Int       @default(0)
-  isDeleted           Boolean   @default(false)
+  serviceType         String?          @default("") // Loại dịch vụ (e.g. Canva, ChatGPT, v.v.)
+  defaultSalePrice    Float            @default(0) // Giá bán mặc định
+  defaultCostPrice    Float            @default(0) // Giá vốn mặc định
+  defaultDurationDays Int              @default(30) // Thời hạn mặc định (30, 60, 90, 180, 365)
+  isActive            Boolean          @default(true)
+  isFeatured          Boolean          @default(false) // Dịch vụ nổi bật
+  sortOrder           Int              @default(0)
+  isDeleted           Boolean          @default(false)
   deletedAt           DateTime?
   orders              Order[]
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  packages            ServicePackage[]
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+}
+
+model ServicePackage {
+  id           String    @id @default(cuid())
+  serviceId    String
+  service      Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  name         String    // e.g., "7 ngày", "15 ngày", "1 tháng", "3 tháng", "6 tháng", "12 tháng"
+  durationDays Int       // Thời hạn (số ngày)
+  salePrice    Float     // Giá bán của gói
+  description  String?   // Mô tả
+  isActive     Boolean   @default(true) // Trạng thái hoạt động
+  sortOrder    Int       @default(0)   // Thứ tự hiển thị
+  isDeleted    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  supplierSourceProducts       SupplierSourceProduct[]
+  supplierSourcePriceHistories SupplierSourcePriceHistory[]
+  supplierSourceStockHistories SupplierSourceStockHistory[]
+
+  @@index([serviceId])
 }
 
 // ==========================================
@@ -79,18 +103,60 @@ model Service {
 // ==========================================
 
 model SupplierSource {
-  id        String    @id @default(cuid())
-  name      String
-  telegram  String?
-  zalo      String?
-  email     String?
-  note      String?
-  isActive  Boolean   @default(true)
-  isDeleted Boolean   @default(false)
-  deletedAt DateTime?
-  orders    Order[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id                     String                       @id @default(cuid())
+  name                   String
+  telegram               String?
+  zalo                   String?
+  email                  String?
+  note                   String?
+  isActive               Boolean                      @default(true)
+  isDeleted              Boolean                      @default(false)
+  deletedAt              DateTime?
+  orders                 Order[]
+  supplierSourceProducts SupplierSourceProduct[]
+  priceHistories         SupplierSourcePriceHistory[]
+  stockHistories         SupplierSourceStockHistory[]
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+}
+
+model SupplierSourceProduct {
+  id               String         @id @default(cuid())
+  supplierSourceId String
+  supplierSource   SupplierSource @relation(fields: [supplierSourceId], references: [id], onDelete: Cascade)
+  packageId        String
+  package          ServicePackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  costPrice        Float          @default(0)  // Giá vốn của nguồn cho gói này
+  stock            Int            @default(0)  // Tồn kho hiện có
+  deliveryMethod   String         @default("MANUAL") // AUTO, MANUAL
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([supplierSourceId, packageId])
+}
+
+model SupplierSourcePriceHistory {
+  id               String         @id @default(cuid())
+  supplierSourceId String
+  supplierSource   SupplierSource @relation(fields: [supplierSourceId], references: [id], onDelete: Cascade)
+  packageId        String
+  package          ServicePackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  oldCostPrice     Float
+  newCostPrice     Float
+  changedBy        String?
+  createdAt        DateTime       @default(now())
+}
+
+model SupplierSourceStockHistory {
+  id               String         @id @default(cuid())
+  supplierSourceId String
+  supplierSource   SupplierSource @relation(fields: [supplierSourceId], references: [id], onDelete: Cascade)
+  packageId        String
+  package          ServicePackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  changeQty        Int            // Ví dụ: +100, -1
+  newStock         Int
+  note             String?
+  createdAt        DateTime       @default(now())
 }
 
 // ==========================================
@@ -153,6 +219,11 @@ model Order {
   status          String   @default("ACTIVE")
 
   note            String?
+
+  // Professional Features
+  isPinned        Boolean  @default(false)
+  color           String?  // Hex or tag name for row highlighting
+  createdBy       String?  // Staff username/email who created this order
 
   // Relations
   refundHistories     RefundHistory[]

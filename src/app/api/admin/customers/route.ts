@@ -102,7 +102,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name, phone, facebook, telegram, zalo, note } = body;
+    const { name, phone, facebook, telegram, zalo, note, tag } = body;
 
     if (!name) {
       return NextResponse.json({ error: 'Tên khách hàng là bắt buộc' }, { status: 400 });
@@ -116,6 +116,8 @@ export async function POST(request: Request) {
         telegram: telegram || null,
         zalo: zalo || null,
         note: note || null,
+        tag: tag || 'NEW',
+        status: 'ACTIVE',
       },
     });
 
@@ -125,7 +127,7 @@ export async function POST(request: Request) {
         userId: session.user.id,
         action: 'CREATE_CUSTOMER',
         target: `Customer:${customer.id}`,
-        details: `Tạo khách hàng mới: ${customer.name}`,
+        details: `Tạo khách hàng mới: ${customer.name} (Tag: ${customer.tag})`,
       },
     });
 

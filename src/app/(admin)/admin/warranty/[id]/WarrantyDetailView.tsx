@@ -25,6 +25,25 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
   const cardRef = useRef<HTMLDivElement>(null);
   const [copying, setCopying] = useState(false);
 
+  const clickTimeoutRef = useRef<any>(null);
+  const handleEmailClick = (e: React.MouseEvent, email: string, password?: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+      const copyText = password ? `${email}\n${password}` : email;
+      navigator.clipboard.writeText(copyText);
+      toast.success('Đã sao chép Email + Password.');
+    } else {
+      clickTimeoutRef.current = setTimeout(() => {
+        clickTimeoutRef.current = null;
+        navigator.clipboard.writeText(email);
+        toast.success('Đã sao chép Email.');
+      }, 250);
+    }
+  };
+
   const latestRefund = order.refundHistories?.[0];
 
   // Days calculations (fallback to date diff if refundHistories is missing)
@@ -229,7 +248,13 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
           <div className="space-y-3">
             <div>
               <p className="text-[10px] text-slate-500 font-bold uppercase">Khách hàng</p>
-              <p className="text-sm font-bold text-white mt-0.5">{order.customer?.name}</p>
+              {order.customer?.id ? (
+                <Link href={`/admin/customers/${order.customer.id}`} className="text-sm font-bold text-indigo-400 hover:text-indigo-300 hover:underline mt-0.5 block">
+                  {order.customer.name}
+                </Link>
+              ) : (
+                <p className="text-sm font-bold text-white mt-0.5">{order.customer?.name || 'N/A'}</p>
+              )}
               <p className="text-xs text-slate-400">{order.customer?.phone || 'Không có SĐT'}</p>
               {order.customer?.facebook && (
                 <p className="text-xs text-blue-400 underline mt-0.5">
@@ -255,7 +280,20 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
             <div className="pt-2 border-t border-white/5">
               <p className="text-[10px] text-slate-500 font-bold uppercase">Thông tin tài khoản đăng nhập</p>
               <div className="mt-1 space-y-1 bg-[#131722]/50 p-2.5 rounded-xl border border-white/5 font-mono text-[11px] text-slate-300">
-                <p><span className="text-slate-500">Email:</span> {order.accountEmail || 'N/A'}</p>
+                <p>
+                  <span className="text-slate-500">Email:</span>{' '}
+                  {order.accountEmail ? (
+                    <button
+                      onClick={(e) => handleEmailClick(e, order.accountEmail, order.accountPassword || undefined)}
+                      className="text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer focus:outline-none font-mono text-left"
+                      title="Click 1 lần để copy Email, double click để copy Email + Password"
+                    >
+                      {order.accountEmail}
+                    </button>
+                  ) : (
+                    'N/A'
+                  )}
+                </p>
                 <p><span className="text-slate-500">Pass:</span> {order.accountPassword || 'N/A'}</p>
                 {order.recoveryCode && <p className="truncate"><span className="text-slate-500">Backup:</span> {order.recoveryCode}</p>}
                 {order.loginLink && (

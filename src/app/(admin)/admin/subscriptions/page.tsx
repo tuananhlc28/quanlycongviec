@@ -31,9 +31,9 @@ export default async function AdminSubscriptionsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <RotateCcw className="w-7 h-7 text-indigo-400" />
-            🔄 Quản lý thuê bao
+            🔄 Quản lý tài khoản
           </h1>
-          <p className="text-sm text-slate-400 mt-1">Quản lý gia hạn, thời hạn và trạng thái thuê bao của khách hàng</p>
+          <p className="text-sm text-slate-400 mt-1">Quản lý gia hạn, thời hạn và trạng thái tài khoản của khách hàng</p>
         </div>
       </div>
 
