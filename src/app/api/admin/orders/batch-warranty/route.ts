@@ -39,13 +39,14 @@ export async function POST(request: Request) {
       }
     });
     const logUserId = dbUser ? dbUser.id : null;
+    const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '';
 
     const statusMap: Record<string, string> = {
-      'report_error': 'WARRANTY',
-      'pending_source': 'WARRANTY_PENDING_SOURCE',
-      'pending_refund': 'WARRANTY_PENDING_REFUND',
-      'done': 'WARRANTY_DONE',
-      'rejected': 'WARRANTY_REJECTED',
+      'report_error': 'REPORTED',
+      'pending_source': 'WAIT_SOURCE',
+      'pending_refund': 'WAIT_CUSTOMER_REFUND',
+      'done': 'COMPLETED',
+      'rejected': 'SOURCE_REJECTED',
     };
 
     const actionLabels: Record<string, string> = {
@@ -62,11 +63,16 @@ export async function POST(request: Request) {
       for (const orderId of orderIds) {
         const order = await tx.order.findUnique({
           where: { id: orderId },
-          include: { customer: { select: { name: true } }, refundHistories: true },
+          include: { refundHistories: true },
         });
 
         if (!order) {
           throw new Error(`Đơn hàng với ID ${orderId} không tồn tại`);
+        }
+
+        const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
+        if (isLocked) {
+          throw new Error(`Đơn hàng ${order.orderCode} đã hoàn tất hoặc bị từ chối và đang bị khóa. Vui lòng mở khóa trước.`);
         }
 
         if (action === 'change_source' && sourceId) {
@@ -203,6 +209,7 @@ export async function POST(request: Request) {
             action: `BATCH_${action.toUpperCase()}`,
             target: `Order:${orderId}`,
             details: `Thao tác hàng loạt: ${actionLabels[action]}.${note ? ' Ghi chú: ' + note : ''}`,
+            ipAddress,
           },
         });
       }
@@ -214,6 +221,6 @@ export async function POST(request: Request) {
     });
   } catch (error: any) {
     console.error('Batch warranty API error:', error);
-    return NextResponse.json({ error: error.message || 'Đã xảy ra lỗi' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Đã xảy ra lỗi' }, { status: 400 });
   }
 }

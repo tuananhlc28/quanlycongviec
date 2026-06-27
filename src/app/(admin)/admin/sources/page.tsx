@@ -33,7 +33,7 @@ export default async function AdminSourcesPage() {
       totalCost += o.costPrice;
       totalRevenue += o.salePrice;
       
-      const hasErrors = o.status === 'WARRANTY' || o.status === 'PENDING_REFUND' || o.status === 'REFUNDED' || o.status === 'WARRANTY_REJECTED' || (o.refundHistories && o.refundHistories.length > 0);
+      const hasErrors = ['REPORTED', 'WAIT_SOURCE', 'WAIT_CUSTOMER_REFUND', 'COMPLETED', 'SOURCE_REJECTED'].includes(o.status) || (o.refundHistories && o.refundHistories.length > 0);
       if (hasErrors) {
         totalErrors++;
       }
@@ -51,7 +51,7 @@ export default async function AdminSourcesPage() {
     });
 
     const errorRate = totalOrders > 0 ? parseFloat(((totalErrors / totalOrders) * 100).toFixed(1)) : 0;
-    const netDebt = totalSourceRefundExpected - totalSourceRefundActual;
+    const netDebt = Math.max(0, (totalSourceRefundExpected - totalSourceRefundRejected) - totalSourceRefundActual);
     const totalProfit = totalRevenue - totalCost - totalRefund + totalSourceRefundActual;
 
     return {

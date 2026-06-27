@@ -24,6 +24,13 @@ export async function POST(
       return NextResponse.json({ error: 'Đơn hàng không tồn tại' }, { status: 404 });
     }
 
+    const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
+    if (isLocked) {
+      return NextResponse.json({ error: 'Đơn hàng đã hoàn tất hoặc bị từ chối và đang bị khóa. Vui lòng mở khóa đơn trước.' }, { status: 400 });
+    }
+
+    const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '';
+
     // Append to note
     const updatedNote = `${order.note || ''}\n[Bảo hành xong]: ${note || 'Đã khắc phục sự cố tài khoản.'}`.trim();
 
@@ -52,6 +59,7 @@ export async function POST(
         action: 'RESOLVE_WARRANTY',
         target: `Order:${id}`,
         details: `Đã xử lý bảo hành xong.${note ? ' Ghi chú: ' + note : ''}`,
+        ipAddress,
       },
     });
 

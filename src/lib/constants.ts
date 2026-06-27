@@ -20,40 +20,53 @@ export const ACCOUNT_TIERS = {
 // #35 - Order statuses with new warranty flow
 export const ORDER_STATUSES = {
   ACTIVE: 'ACTIVE',
-  EXPIRING_SOON: 'EXPIRING_SOON',
+  EXPIRING: 'EXPIRING',
   EXPIRED: 'EXPIRED',
-  WARRANTY: 'WARRANTY', // Khách báo lỗi
-  WARRANTY_PENDING_SOURCE: 'WARRANTY_PENDING_SOURCE', // Chờ nguồn hoàn tiền
-  WARRANTY_PENDING_REFUND: 'WARRANTY_PENDING_REFUND', // Chờ hoàn khách (nguồn đã đồng ý)
-  WARRANTY_DONE: 'WARRANTY_DONE', // Hoàn tất bảo hành
-  WARRANTY_REJECTED: 'WARRANTY_REJECTED', // Nguồn từ chối bảo hành
-  REFUNDED: 'REFUNDED', // Legacy - đã hoàn tiền
+  REPORTED: 'REPORTED',
+  WAIT_SOURCE: 'WAIT_SOURCE',
+  WAIT_CUSTOMER_REFUND: 'WAIT_CUSTOMER_REFUND',
+  SOURCE_REJECTED: 'SOURCE_REJECTED',
+  COMPLETED: 'COMPLETED',
 } as const;
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {
   ACTIVE: '🟢 Đang sử dụng',
+  EXPIRING: '🟡 Sắp hết hạn',
+  EXPIRED: '⚫ Đã hết hạn',
+  REPORTED: '🔴 Có sự cố',
+  WAIT_SOURCE: '🟠 Chờ nguồn',
+  WAIT_CUSTOMER_REFUND: '🟣 Chờ hoàn khách',
+  SOURCE_REJECTED: '⚪ Từ chối hoàn',
+  COMPLETED: '🟦 Hoàn tất',
+
+  // Legacy mappings for safe fallback
   EXPIRING_SOON: '🟡 Sắp hết hạn',
-  EXPIRED: '🔴 Hết hạn',
-  WARRANTY: '🔵 Khách báo lỗi',
-  WARRANTY_PENDING_SOURCE: '🟣 Chờ nguồn hoàn',
-  WARRANTY_PENDING_REFUND: '🟠 Chờ hoàn khách',
-  WARRANTY_DONE: '✅ Hoàn tất BH',
-  WARRANTY_REJECTED: '⛔ Từ chối BH',
-  REFUNDED: '⚫ Đã hoàn tiền',
-  PENDING_REFUND: '🟠 Chờ hoàn tiền', // legacy
+  WARRANTY: '🔴 Có sự cố',
+  WARRANTY_PENDING_SOURCE: '🟠 Chờ nguồn',
+  WARRANTY_PENDING_REFUND: '🟣 Chờ hoàn khách',
+  WARRANTY_DONE: '🟦 Hoàn tất',
+  WARRANTY_REJECTED: '⚪ Từ chối hoàn',
+  REFUNDED: '🟦 Hoàn tất',
 };
 
 export const ORDER_STATUS_COLORS: Record<string, string> = {
   ACTIVE: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  EXPIRING: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  EXPIRED: 'bg-slate-800/80 text-slate-400 border-slate-700/50',
+  REPORTED: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+  WAIT_SOURCE: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  WAIT_CUSTOMER_REFUND: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  SOURCE_REJECTED: 'bg-white/5 text-slate-300 border-white/10',
+  COMPLETED: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+
+  // Legacy mappings for safe fallback
   EXPIRING_SOON: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  EXPIRED: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
-  WARRANTY: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  WARRANTY_PENDING_SOURCE: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  WARRANTY_PENDING_REFUND: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  WARRANTY_DONE: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-  WARRANTY_REJECTED: 'bg-red-500/10 text-red-400 border-red-500/20',
-  REFUNDED: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
-  PENDING_REFUND: 'bg-orange-500/10 text-orange-400 border-orange-500/20', // legacy
+  WARRANTY: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+  WARRANTY_PENDING_SOURCE: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  WARRANTY_PENDING_REFUND: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  WARRANTY_DONE: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  WARRANTY_REJECTED: 'bg-white/5 text-slate-300 border-white/10',
+  REFUNDED: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
 };
 
 // #72 - Payment statuses (independent from order status)

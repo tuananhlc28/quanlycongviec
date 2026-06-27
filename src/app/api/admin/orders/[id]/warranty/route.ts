@@ -28,6 +28,11 @@ export async function POST(
       return NextResponse.json({ error: 'Đơn hàng không tồn tại' }, { status: 404 });
     }
 
+    const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
+    if (isLocked) {
+      return NextResponse.json({ error: 'Đơn hàng đã hoàn tất hoặc bị từ chối và đang bị khóa. Vui lòng mở khóa đơn trước.' }, { status: 400 });
+    }
+
     const faultDate = errorDate ? new Date(errorDate) : new Date();
     const formattedDate = faultDate.toLocaleDateString('vi-VN');
 
@@ -48,12 +53,13 @@ export async function POST(
     const sourceRefundExpected = Math.round(daysRemaining * supplierCostPerDay);
 
     const updatedProfit = order.salePrice - order.costPrice - refundAmount + sourceRefundExpected;
+    const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '';
 
     const updated = await prisma.$transaction(async (tx: any) => {
       const ord = await tx.order.update({
         where: { id },
         data: {
-          status: 'WARRANTY',
+          status: 'REPORTED',
           profit: updatedProfit,
           note: updatedNote,
         },
@@ -97,12 +103,13 @@ export async function POST(
         action: 'WARRANTY_ORDER',
         target: `Order:${id}`,
         details: `Khách báo lỗi: ${reason}.${note ? ' Ghi chú: ' + note : ''}`,
+        ipAddress,
       },
     });
 
     return NextResponse.json(updated);
   } catch (error: any) {
-    console.error('Report error API error:', error);
+    console.error('Report warranty API error:', error);
     return NextResponse.json({ error: error.message || 'Đã xảy ra lỗi' }, { status: 500 });
   }
 }

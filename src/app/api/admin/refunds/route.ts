@@ -50,7 +50,10 @@ export async function GET(request: Request) {
       where.order = orderFilter;
     }
 
-    const [refunds, total] = await Promise.all([
+    const sortBy = searchParams.get('sortBy') || 'createdAt';
+    const sortOrder = searchParams.get('sortOrder') || 'desc';
+
+    const [allFilteredRefunds, total] = await Promise.all([
       prisma.refundHistory.findMany({
         where,
         include: {
@@ -61,12 +64,54 @@ export async function GET(request: Request) {
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
       }),
       prisma.refundHistory.count({ where }),
     ]);
+
+    allFilteredRefunds.sort((a: any, b: any) => {
+      let valA: any;
+      let valB: any;
+
+      if (sortBy === 'createdAt') {
+        valA = new Date(a.createdAt).getTime();
+        valB = new Date(b.createdAt).getTime();
+      } else if (sortBy === 'amount') {
+        valA = a.amount;
+        valB = b.amount;
+      } else if (sortBy === 'sourceRefundActual') {
+        valA = a.sourceRefundActual ?? a.sourceAmount ?? 0;
+        valB = b.sourceRefundActual ?? b.sourceAmount ?? 0;
+      } else if (sortBy === 'salePrice') {
+        valA = a.order?.salePrice ?? 0;
+        valB = b.order?.salePrice ?? 0;
+      } else if (sortBy === 'costPrice') {
+        valA = a.order?.costPrice ?? 0;
+        valB = b.order?.costPrice ?? 0;
+      } else if (sortBy === 'netProfitAfterRefund') {
+        valA = a.netProfitAfterRefund ?? 0;
+        valB = b.netProfitAfterRefund ?? 0;
+      } else if (sortBy === 'sourceStatus') {
+        const workflowOrder = (status: string) => {
+          const s = status || '';
+          if (s === 'PENDING' || s === 'NOT_REQUESTED') return 1;
+          if (s === 'REQUESTED' || s === 'APPROVED') return 2;
+          if (s === 'REFUNDED') return 3;
+          if (s === 'REJECTED') return 4;
+          return 5;
+        };
+        valA = workflowOrder(a.sourceStatus);
+        valB = workflowOrder(b.sourceStatus);
+      } else {
+        valA = new Date(a.createdAt).getTime();
+        valB = new Date(b.createdAt).getTime();
+      }
+
+      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    const refunds = allFilteredRefunds.slice(skip, skip + limit);
 
     // ==========================================
     // Dashboard stats — computed from ALL refunds (no filter for global stats)
@@ -78,7 +123,7 @@ export async function GET(request: Request) {
         sourceRefundActual: true,
         sourceStatus: true,
         order: {
-          select: { salePrice: true, costPrice: true },
+          select: { salePrice: true, costPrice: true, status: true },
         },
       },
     });
@@ -87,7 +132,12 @@ export async function GET(request: Request) {
     let totalSourceRefundExpected = 0;
     let totalSourceRefundActual = 0;
     let totalProfitAfterRefund = 0;
-    let totalPending = 0;
+    let totalSourceDebt = 0;
+
+    let totalClientRefundedCount = 0;
+    let totalPendingSourceCount = 0;
+    let totalPendingClientCount = 0;
+    let totalRejectedSourceCount = 0;
 
     for (const r of allRefunds) {
       totalClientRefundActual += r.amount || 0;
@@ -97,12 +147,26 @@ export async function GET(request: Request) {
       const profit = (r.order?.salePrice ?? 0) - (r.order?.costPrice ?? 0) - (r.amount || 0) + (r.sourceRefundActual || 0);
       totalProfitAfterRefund += profit;
 
-      if (r.sourceStatus === 'PENDING') {
-        totalPending += Math.max(0, (r.sourceRefundExpected || 0) - (r.sourceRefundActual || 0));
+      const isRejected = r.order?.status === 'SOURCE_REJECTED' || r.sourceStatus === 'REJECTED';
+      const isRefunded = r.order?.status === 'COMPLETED' || r.sourceStatus === 'REFUNDED';
+      const isPendingClient = r.order?.status === 'WAIT_CUSTOMER_REFUND';
+
+      if (isRejected) {
+        totalRejectedSourceCount++;
+      } else if (isRefunded) {
+        totalClientRefundedCount++;
+      } else if (isPendingClient) {
+        totalPendingClientCount++;
+      } else {
+        totalPendingSourceCount++;
+      }
+
+      const isWaiting = ['PENDING', 'NOT_REQUESTED', 'REQUESTED', 'APPROVED'].includes(r.sourceStatus) && !isRejected;
+      if (isWaiting) {
+        totalSourceDebt += Math.max(0, (r.sourceRefundExpected || 0) - (r.sourceRefundActual || 0));
       }
     }
 
-    const totalSourceDebt = Math.max(0, totalSourceRefundExpected - totalSourceRefundActual);
     const refundDiff = totalSourceRefundActual - totalSourceRefundExpected;
 
     const dashboard = {
@@ -112,8 +176,12 @@ export async function GET(request: Request) {
       totalSourceDebt,
       refundDiff,
       totalProfitAfterRefund,
-      totalPending,
+      totalPending: totalSourceDebt,
       totalRefundCount: allRefunds.length,
+      totalClientRefundedCount,
+      totalPendingSourceCount,
+      totalPendingClientCount,
+      totalRejectedSourceCount,
     };
 
     return NextResponse.json({

@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, calculateDetailedCreditRating } from '@/lib/utils';
 import {
   DollarSign,
   ShoppingCart,
@@ -121,6 +121,7 @@ async function getDashboardData() {
   let warrantyCount = 0;
   let pendingRefundCount = 0;
   let totalPendingSource = 0;
+  let troubledCount = 0;
   let expiringSoonCount = 0;
   let expiredCount = 0;
 
@@ -154,6 +155,7 @@ async function getDashboardData() {
     debt: number;
     refunded: number;
     rejected: number;
+    profit: number;
   }>();
 
   // Lifetime customer aggregates
@@ -163,6 +165,14 @@ async function getDashboardData() {
     phone: string | null;
     spend: number;
     netProfit: number;
+    ordersCount: number;
+    errorsCount: number;
+    totalRefund: number;
+    paidOnTimeCount: number;
+    latePaymentCount: number;
+    currentDebtCount: number;
+    creditScore: number;
+    rating: string;
   }>();
 
   // Monthly data for chart (last 6 months)
@@ -186,7 +196,7 @@ async function getDashboardData() {
     const isM1 = oDate >= startOfPrevMonth && oDate <= endOfPrevMonth;
 
     const isUndelivered = !o.accountEmail || o.accountEmail.trim() === '';
-    if (isUndelivered && o.status !== 'EXPIRED' && o.status !== 'WARRANTY_DONE' && o.status !== 'WARRANTY_REJECTED') {
+    if (isUndelivered && o.status !== 'EXPIRED' && o.status !== 'COMPLETED' && o.status !== 'SOURCE_REJECTED') {
       totalUndelivered++;
     }
 
@@ -227,27 +237,32 @@ async function getDashboardData() {
 
     // Warranty status counts
     const status = o.status;
-    if (status === 'WARRANTY') {
+    const isTroubled = ['REPORTED', 'WAIT_SOURCE', 'WAIT_CUSTOMER_REFUND'].includes(status);
+    if (isTroubled) {
+      troubledCount++;
+    }
+
+    if (status === 'REPORTED') {
       warrantyCount++;
       if (new Date(o.updatedAt) < threeDaysAgo) {
         warrantyOverdueCount++;
       }
-    } else if (status === 'WARRANTY_PENDING_SOURCE') {
+    } else if (status === 'WAIT_SOURCE') {
       warrantyCount++;
       totalPendingSource++;
-    } else if (status === 'WARRANTY_PENDING_REFUND') {
+    } else if (status === 'WAIT_CUSTOMER_REFUND') {
       pendingRefundCount++;
     }
 
     // Expiry counts
     const endDate = new Date(o.endDate);
-    const isUnderActive = ['ACTIVE', 'EXPIRING_SOON', 'WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND'].includes(status);
+    const isUnderActive = ['ACTIVE', 'EXPIRING', 'REPORTED', 'WAIT_SOURCE', 'WAIT_CUSTOMER_REFUND'].includes(status);
     const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     
-    if (isUnderActive && endDate >= now && endDate <= sevenDaysLater) {
+    if (!isTroubled && isUnderActive && endDate >= now && endDate <= sevenDaysLater) {
       expiringSoonCount++;
     }
-    if (status === 'EXPIRED' || (isUnderActive && endDate < now)) {
+    if (!isTroubled && (status === 'EXPIRED' || (isUnderActive && endDate < now))) {
       expiredCount++;
     }
 
@@ -291,7 +306,7 @@ async function getDashboardData() {
       sStat.revenue += o.salePrice;
       sStat.cost += o.costPrice;
       sStat.profit += (o.salePrice - o.costPrice);
-      const hasError = ['WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND', 'WARRANTY_DONE', 'WARRANTY_REJECTED'].includes(o.status) || o.refundHistories.length > 0;
+      const hasError = ['REPORTED', 'WAIT_SOURCE', 'WAIT_CUSTOMER_REFUND', 'COMPLETED', 'SOURCE_REJECTED'].includes(o.status) || o.refundHistories.length > 0;
       if (hasError) {
         sStat.errorOrders++;
       }
@@ -309,14 +324,18 @@ async function getDashboardData() {
         debt: 0,
         refunded: 0,
         rejected: 0,
+        profit: 0,
       });
     }
     const supStat = supplierStatsMap.get(supId)!;
     supStat.totalOrders++;
-    const hasError = ['WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND', 'WARRANTY_DONE', 'WARRANTY_REJECTED'].includes(o.status) || o.refundHistories.length > 0;
+    const hasError = ['REPORTED', 'WAIT_SOURCE', 'WAIT_CUSTOMER_REFUND', 'COMPLETED', 'SOURCE_REJECTED'].includes(o.status) || o.refundHistories.length > 0;
     if (hasError) {
       supStat.errorOrders++;
     }
+    const orderRefund = o.refundHistories.reduce((sum: number, r: any) => sum + r.amount, 0);
+    const orderSrcRefund = o.refundHistories.reduce((sum: number, r: any) => sum + (r.sourceRefundActual ?? r.sourceAmount ?? 0), 0);
+    supStat.profit += (o.salePrice - o.costPrice) - orderRefund + orderSrcRefund;
 
     // Lifetime Customer stats
     if (o.customer) {
@@ -328,13 +347,32 @@ async function getDashboardData() {
           phone: o.customer.phone,
           spend: 0,
           netProfit: 0,
+          ordersCount: 0,
+          errorsCount: 0,
+          totalRefund: 0,
+          paidOnTimeCount: 0,
+          latePaymentCount: 0,
+          currentDebtCount: 0,
+          creditScore: 0,
+          rating: 'B',
         });
       }
       const cStat = customerStatsMap.get(cId)!;
+      cStat.ordersCount++;
       cStat.spend += o.salePrice;
-      const orderRefund = o.refundHistories.reduce((sum: number, r: any) => sum + r.amount, 0);
-      const orderSrcRefund = o.refundHistories.reduce((sum: number, r: any) => sum + (r.sourceRefundActual ?? r.sourceAmount ?? 0), 0);
       cStat.netProfit += (o.salePrice - o.costPrice) - orderRefund + orderSrcRefund;
+      cStat.totalRefund += orderRefund;
+      if (hasError) {
+        cStat.errorsCount++;
+      }
+      if (o.paymentStatus === 'PAID') {
+        cStat.paidOnTimeCount++;
+      } else if (o.paymentStatus === 'OVERDUE') {
+        cStat.latePaymentCount++;
+        cStat.currentDebtCount++;
+      } else if (o.paymentStatus === 'UNPAID') {
+        cStat.currentDebtCount++;
+      }
     }
   }
 
@@ -382,7 +420,7 @@ async function getDashboardData() {
     }
 
     // Warnings and supplier debt tracking
-    if (r.sourceStatus === 'PENDING') {
+    if (['PENDING', 'REQUESTED', 'APPROVED'].includes(r.sourceStatus)) {
       const debt = r.sourceRefundExpected - r.sourceRefundActual;
       if (debt > 0) {
         totalSourceDebtPending += debt;
@@ -390,7 +428,7 @@ async function getDashboardData() {
     }
 
     if (r.order) {
-      if (r.order.status === 'WARRANTY_PENDING_REFUND') {
+      if (r.order.status === 'WAIT_CUSTOMER_REFUND') {
         totalClientRefundPending += r.amount;
       }
 
@@ -407,7 +445,7 @@ async function getDashboardData() {
       const supStat = supplierStatsMap.get(supId);
       if (supStat) {
         supStat.refunded += actualSrcRefund;
-        if (r.sourceStatus === 'PENDING') {
+        if (['PENDING', 'REQUESTED', 'APPROVED'].includes(r.sourceStatus)) {
           supStat.debt += Math.max(0, r.sourceRefundExpected - r.sourceRefundActual);
         } else if (r.sourceStatus === 'REJECTED') {
           supStat.rejected += r.sourceRefundExpected;
@@ -447,7 +485,9 @@ async function getDashboardData() {
   // Lifetime financial KPIs
   const totalLifetimeProfitBeforeRefund = totalLifetimeRevenue - totalLifetimeCost;
   const totalLifetimeProfitAfterRefund = totalLifetimeRevenue - totalLifetimeCost - totalLifetimeClientRefund + totalLifetimeSourceRefund;
-  const totalLifetimeSourceDebt = Math.max(0, totalLifetimeSourceExpected - totalLifetimeSourceRefund);
+  const totalLifetimeSourceDebt = allRefunds
+    .filter((r: any) => ['PENDING', 'REQUESTED', 'APPROVED'].includes(r.sourceStatus))
+    .reduce((sum: number, r: any) => sum + Math.max(0, (r.sourceRefundExpected || 0) - (r.sourceRefundActual || 0)), 0);
 
   const getGrowthPercent = (current: number, previous: number) => {
     if (previous === 0) return current > 0 ? 100 : 0;
@@ -472,12 +512,35 @@ async function getDashboardData() {
     .sort((a, b) => b.errorOrders - a.errorOrders)
     .slice(0, 10);
 
+  // Calculate credit ratings for customers
+  for (const cStat of customerStatsMap.values()) {
+    const ratingInfo = calculateDetailedCreditRating({
+      totalOrders: cStat.ordersCount,
+      paidOnTimeCount: cStat.paidOnTimeCount,
+      latePaymentCount: cStat.latePaymentCount,
+      currentDebtCount: cStat.currentDebtCount,
+      totalSpend: cStat.spend,
+      warrantyCount: cStat.errorsCount,
+      totalRefund: cStat.totalRefund,
+    });
+    cStat.creditScore = ratingInfo.score;
+    cStat.rating = ratingInfo.rating;
+  }
+
   const topCustomersBySpend = Array.from(customerStatsMap.values())
     .sort((a, b) => b.spend - a.spend)
     .slice(0, 5);
 
   const topCustomersByProfit = Array.from(customerStatsMap.values())
     .sort((a, b) => b.netProfit - a.netProfit)
+    .slice(0, 5);
+
+  const topCustomersVIP = Array.from(customerStatsMap.values())
+    .sort((a, b) => b.creditScore - a.creditScore)
+    .slice(0, 5);
+
+  const topCustomersByErrors = Array.from(customerStatsMap.values())
+    .sort((a, b) => b.errorsCount - a.errorsCount)
     .slice(0, 5);
 
   const topServicesByCount = Array.from(serviceStatsMap.values())
@@ -496,6 +559,14 @@ async function getDashboardData() {
     .sort((a, b) => b.refunded - a.refunded)
     .slice(0, 5);
 
+  const topSourcesByProfit = Array.from(supplierStatsMap.values())
+    .sort((a, b) => b.profit - a.profit)
+    .slice(0, 5);
+
+  const topSourcesByErrors = Array.from(supplierStatsMap.values())
+    .sort((a, b) => b.errorOrders - a.errorOrders)
+    .slice(0, 5);
+
   // Expiring orders in 15 days
   const fifteenDaysLater = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
   const expiringOrders = allOrders
@@ -512,7 +583,47 @@ async function getDashboardData() {
     .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
 
+  // --- New KPI computations ---
+  const totalRefundProducts = allRefunds.length;
+  const totalRefundedOrders = allOrders.filter((o: any) => o.refundHistories && o.refundHistories.length > 0).length;
+  const refundRate = allOrders.length > 0 ? (totalRefundedOrders / allOrders.length) * 100 : 0;
+
+  const totalErrorOrders = allOrders.filter((o: any) =>
+    ['WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND', 'WARRANTY_DONE', 'WARRANTY_REJECTED'].includes(o.status) ||
+    (o.refundHistories && o.refundHistories.length > 0)
+  ).length;
+  const errorRate = allOrders.length > 0 ? (totalErrorOrders / allOrders.length) * 100 : 0;
+
+  const totalWarrantyOrders = allOrders.filter((o: any) =>
+    ['WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND'].includes(o.status)
+  ).length;
+  const warrantyRate = allOrders.length > 0 ? (totalWarrantyOrders / allOrders.length) * 100 : 0;
+
+  const totalPendingSourceOrders = allOrders.filter((o: any) => o.status === 'WARRANTY_PENDING_SOURCE').length;
+  const sourceChangeRate = allOrders.length > 0 ? (totalPendingSourceOrders / allOrders.length) * 100 : 0;
+
+  const customerOrderCounts: Record<string, number> = {};
+  allOrders.forEach((o: any) => {
+    customerOrderCounts[o.customerId] = (customerOrderCounts[o.customerId] || 0) + 1;
+  });
+  const totalCustomersWithOrders = Object.keys(customerOrderCounts).length;
+  const returningCustomersCount = Object.values(customerOrderCounts).filter(c => c > 1).length;
+  const returningCustomerRate = totalCustomersWithOrders > 0 ? (returningCustomersCount / totalCustomersWithOrders) * 100 : 0;
+
+  const revenueAfterRefund = totalLifetimeRevenue - totalLifetimeClientRefund;
+  const profitAfterRefund = totalLifetimeProfitAfterRefund;
+
   return {
+    totalRefundProducts,
+    totalRefundedOrders,
+    refundRate,
+    errorRate,
+    warrantyRate,
+    sourceChangeRate,
+    returningCustomersCount,
+    returningCustomerRate,
+    revenueAfterRefund,
+    profitAfterRefund,
     ordersTodayCount,
     revenueToday,
     costToday,
@@ -537,6 +648,7 @@ async function getDashboardData() {
     totalUndelivered,
     totalPendingSource,
     totalPendingRefund: pendingRefundCount,
+    troubledCount,
     expiringSoonCount,
     expiredCount,
     overdueCustomersCount: overdueCustomerIds.size,
@@ -580,10 +692,14 @@ async function getDashboardData() {
     // Rankings
     topCustomersBySpend,
     topCustomersByProfit,
+    topCustomersVIP,
+    topCustomersByErrors,
     topServicesByCount,
     topServicesByProfit,
     topSourcesByCount,
     topSourcesByRefund,
+    topSourcesByProfit,
+    topSourcesByErrors,
     topServiceErrors,
     topSupplierErrors,
 
@@ -651,7 +767,7 @@ export default async function AdminDashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            📊 Dashboard CRM
+            📊 Tổng quan CRM
           </h1>
           <p className="text-sm text-slate-400 mt-1">
             Tổng quan số liệu kinh doanh thực tế, quản lý bảo hành và công nợ.
@@ -721,11 +837,11 @@ export default async function AdminDashboard() {
             <span className="text-base font-bold text-cyan-400 mt-2 font-mono">{formatCurrency(data.totalLifetimeProfitAfterRefund)}</span>
           </div>
           <div className="p-4.5 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-white/10 transition-all flex flex-col justify-between">
-            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Công nợ khách</span>
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Khách còn nợ</span>
             <span className="text-base font-bold text-orange-400 mt-2 font-mono">{formatCurrency(data.debtStats.totalDebtAmount)}</span>
           </div>
           <div className="p-4.5 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-white/10 transition-all flex flex-col justify-between">
-            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Công nợ nguồn</span>
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Nguồn còn nợ</span>
             <span className="text-base font-bold text-amber-500 mt-2 font-mono">{formatCurrency(data.totalLifetimeSourceDebt)}</span>
           </div>
           <div className="p-4.5 rounded-2xl bg-[#1a1f2e] border border-indigo-500/20 hover:border-indigo-500/40 transition-all flex flex-col justify-between">
@@ -743,44 +859,117 @@ export default async function AdminDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-3">
           <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-            <span>📅 Hôm nay (Hoạt động vận hành)</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <Activity className="w-4 h-4 text-indigo-400" />
+            <span>📌 Chỉ số vận hành nhanh (Click để xem chi tiết)</span>
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <div className="p-4.5 rounded-2xl bg-[#1e2330]/50 border border-white/5 hover:border-white/10 transition-all flex flex-col justify-between">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">📦 Đơn chưa giao</p>
-              <div className="flex items-baseline justify-between mt-3">
-                <span className="text-xl font-extrabold text-white">{data.totalUndelivered}</span>
-                <span className="text-[9px] text-slate-500">cần nạp account</span>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            {/* Card 1: Đơn sắp hết hạn */}
+            <Link href="/admin/subscriptions" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-yellow-500/30 hover:bg-yellow-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">🟡 Sắp hết hạn</span>
+                <Clock className="w-3.5 h-3.5 text-yellow-500 opacity-60 group-hover:opacity-100 transition-opacity" />
               </div>
-            </div>
-            <Link href="/admin/warranty" className="p-4.5 rounded-2xl bg-[#1e2330]/50 border border-white/5 hover:border-purple-500/30 transition-all flex flex-col justify-between cursor-pointer">
-              <p className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">🟣 Đơn chờ nguồn</p>
-              <div className="flex items-baseline justify-between mt-3">
-                <span className="text-xl font-extrabold text-purple-400">{data.totalPendingSource}</span>
-                <span className="text-[9px] text-slate-500">đang đợi hoàn →</span>
+              <span className="text-2xl font-extrabold text-yellow-400">{data.expiringSoonCount}</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-slate-300 transition-colors">Xem quản lý TK →</span>
+            </Link>
+
+            {/* Card 2: Đơn hết hạn */}
+            <Link href="/admin/subscriptions" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-rose-500/30 hover:bg-rose-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">🔴 Đã hết hạn</span>
+                <XCircle className="w-3.5 h-3.5 text-rose-500 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <span className="text-2xl font-extrabold text-rose-400">{data.expiredCount}</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-slate-300 transition-colors">Cần gia hạn ngay →</span>
+            </Link>
+
+            {/* Card 3: Đơn báo sự cố */}
+            <Link href="/admin/warranty" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-blue-500/30 hover:bg-blue-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">🔵 Xử lý sau bán</span>
+                <ShieldAlert className="w-3.5 h-3.5 text-blue-400 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <span className="text-2xl font-extrabold text-blue-400">{data.troubledCount}</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-slate-300 transition-colors">Đang xử lý →</span>
+            </Link>
+
+            {/* Card 4: Chờ nguồn */}
+            <Link href="/admin/warranty" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-purple-500/30 hover:bg-purple-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">🟣 Chờ nguồn hoàn</span>
+                <HelpCircle className="w-3.5 h-3.5 text-purple-400 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <span className="text-2xl font-extrabold text-purple-400">{data.totalPendingSource}</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-slate-300 transition-colors">Đang chờ nguồn →</span>
+            </Link>
+
+            {/* Card 5: Chờ hoàn khách */}
+            <Link href="/admin/warranty" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-orange-500/30 hover:bg-orange-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">🟠 Chờ hoàn khách</span>
+                <ArrowDownRight className="w-3.5 h-3.5 text-orange-400 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <span className="text-2xl font-extrabold text-orange-400">{data.totalPendingRefund}</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-slate-300 transition-colors">Chờ bấm hoàn →</span>
+            </Link>
+
+            {/* Card 6: Doanh thu tháng */}
+            <Link href="/admin/orders" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/30 hover:bg-indigo-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">💰 DT tháng này</span>
+                <TrendingUp className="w-3.5 h-3.5 text-indigo-400 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <span className="text-sm font-extrabold text-indigo-300 font-mono leading-tight">{formatCurrency(data.revenueThisMonth)}</span>
+              <div className="flex items-center gap-1">
+                <GrowthBadge value={data.growthStats.revGrowthM0} />
+                <span className="text-[9px] text-slate-500">so tháng trước</span>
               </div>
             </Link>
-            <Link href="/admin/warranty" className="p-4.5 rounded-2xl bg-[#1e2330]/50 border border-white/5 hover:border-orange-500/30 transition-all flex flex-col justify-between cursor-pointer">
-              <p className="text-[10px] font-bold text-orange-400 uppercase tracking-wider">🟠 Khách cần hoàn</p>
-              <div className="flex items-baseline justify-between mt-3">
-                <span className="text-xl font-extrabold text-orange-400">{data.totalPendingRefund}</span>
-                <span className="text-[9px] text-slate-500">chờ bấm hoàn →</span>
+
+            {/* Card 7: Lợi nhuận tháng */}
+            <Link href="/admin/orders" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-teal-500/30 hover:bg-teal-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">📈 LN tháng này</span>
+                <DollarSign className="w-3.5 h-3.5 text-teal-400 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <span className="text-sm font-extrabold text-teal-300 font-mono leading-tight">{formatCurrency(data.netProfitThisMonth)}</span>
+              <div className="flex items-center gap-1">
+                <GrowthBadge value={data.growthStats.profGrowthM0} />
+                <span className="text-[9px] text-slate-500">so tháng trước</span>
               </div>
             </Link>
-            <Link href="/admin/subscriptions" className="p-4.5 rounded-2xl bg-[#1e2330]/50 border border-white/5 hover:border-yellow-500/30 transition-all flex flex-col justify-between cursor-pointer">
-              <p className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider">🟡 Đơn sắp hết hạn</p>
-              <div className="flex items-baseline justify-between mt-3">
-                <span className="text-xl font-extrabold text-yellow-400">{data.expiringSoonCount}</span>
-                <span className="text-[9px] text-slate-500">&lt; 7 ngày →</span>
+
+            {/* Card 8: Đơn mới tháng */}
+            <Link href="/admin/orders" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-emerald-500/30 hover:bg-emerald-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">🛒 Đơn mới T.này</span>
+                <ShoppingCart className="w-3.5 h-3.5 text-emerald-400 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <span className="text-2xl font-extrabold text-emerald-400">{data.newOrdersCount}</span>
+              <div className="flex items-center gap-1">
+                <GrowthBadge value={data.growthStats.countGrowthM0} />
+                <span className="text-[9px] text-slate-500">so tháng trước</span>
               </div>
             </Link>
-            <Link href="/admin/subscriptions" className="p-4.5 rounded-2xl bg-[#1e2330]/50 border border-white/5 hover:border-red-500/30 transition-all flex flex-col justify-between cursor-pointer">
-              <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider">🔴 Đơn cần gia hạn</p>
-              <div className="flex items-baseline justify-between mt-3">
-                <span className="text-xl font-extrabold text-rose-400">{data.expiredCount}</span>
-                <span className="text-[9px] text-slate-500">đã hết hạn →</span>
+
+            {/* Card 9: Khách mới tháng */}
+            <Link href="/admin/customers" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-cyan-500/30 hover:bg-cyan-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">👥 Khách mới</span>
+                <Users className="w-3.5 h-3.5 text-cyan-400 opacity-60 group-hover:opacity-100 transition-opacity" />
               </div>
+              <span className="text-2xl font-extrabold text-cyan-400">{data.newCustomersCount}</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-slate-300 transition-colors">Tháng này →</span>
+            </Link>
+
+            {/* Card 10: Công nợ quá hạn */}
+            <Link href="/admin/debts" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-red-500/30 hover:bg-red-500/5 transition-all flex flex-col gap-2 cursor-pointer">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">💳 Nợ quá hạn</span>
+                <AlertTriangle className="w-3.5 h-3.5 text-red-400 opacity-60 group-hover:opacity-100 transition-opacity" />
+              </div>
+              <span className="text-sm font-extrabold text-red-400 font-mono leading-tight">{formatCurrency(data.totalOverdueDebtAmount)}</span>
+              <span className="text-[9px] text-slate-500 group-hover:text-slate-300 transition-colors">{data.overdueCustomersCount} khách quá hạn →</span>
             </Link>
           </div>
         </div>
@@ -795,6 +984,52 @@ export default async function AdminDashboard() {
             revenueYesterday={data.revenueYesterday}
             profitYesterday={data.profitYesterday}
           />
+        </div>
+      </div>
+
+      {/* SECTION: CHỈ SỐ HOÀN TIỀN & TỶ LỆ LỖI (LIFETIME) */}
+      <div className="space-y-3">
+        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-rose-400" />
+          <span>📈 Chỉ số hoàn tiền & Tỷ lệ lỗi (Lifetime)</span>
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-9 gap-4">
+          <Link href="/admin/refunds" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-rose-500/30 hover:bg-rose-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Tổng SP đã hoàn</span>
+            <span className="text-lg font-bold text-rose-400 mt-2 font-mono">{data.totalRefundProducts}</span>
+          </Link>
+          <Link href="/admin/refunds" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-rose-500/30 hover:bg-rose-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Tổng đơn hoàn</span>
+            <span className="text-lg font-bold text-rose-400 mt-2 font-mono">{data.totalRefundedOrders}</span>
+          </Link>
+          <Link href="/admin/refunds" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-rose-500/30 hover:bg-rose-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Tỷ lệ hoàn</span>
+            <span className="text-lg font-bold text-rose-300 mt-2 font-mono">{data.refundRate.toFixed(1)}%</span>
+          </Link>
+          <Link href="/admin/warranty?status=error" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-red-500/30 hover:bg-red-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Tỷ lệ lỗi</span>
+            <span className="text-lg font-bold text-red-400 mt-2 font-mono">{data.errorRate.toFixed(1)}%</span>
+          </Link>
+          <Link href="/admin/warranty?status=WARRANTY" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-blue-500/30 hover:bg-blue-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Tỷ lệ bảo hành</span>
+            <span className="text-lg font-bold text-blue-400 mt-2 font-mono">{data.warrantyRate.toFixed(1)}%</span>
+          </Link>
+          <Link href="/admin/warranty?status=WARRANTY_PENDING_SOURCE" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-purple-500/30 hover:bg-purple-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Tỷ lệ đổi nguồn</span>
+            <span className="text-lg font-bold text-purple-400 mt-2 font-mono">{data.sourceChangeRate.toFixed(1)}%</span>
+          </Link>
+          <Link href="/admin/customers?filter=returning" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-cyan-500/30 hover:bg-cyan-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Khách quay lại</span>
+            <span className="text-lg font-bold text-cyan-400 mt-2 font-mono">{data.returningCustomerRate.toFixed(1)}%</span>
+          </Link>
+          <Link href="/admin/orders" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-emerald-500/30 hover:bg-emerald-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">DT sau hoàn</span>
+            <span className="text-xs font-bold text-emerald-400 mt-2 font-mono leading-tight">{formatCurrency(data.revenueAfterRefund)}</span>
+          </Link>
+          <Link href="/admin/orders" className="group p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-teal-500/30 hover:bg-teal-500/5 transition-all flex flex-col justify-between cursor-pointer">
+            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">LN sau hoàn</span>
+            <span className="text-xs font-bold text-teal-400 mt-2 font-mono leading-tight">{formatCurrency(data.profitAfterRefund)}</span>
+          </Link>
         </div>
       </div>
 
@@ -844,7 +1079,7 @@ export default async function AdminDashboard() {
               <div className="p-4 rounded-xl bg-rose-500/5 border border-rose-500/10 flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5 animate-pulse" />
                 <div className="space-y-1">
-                  <h3 className="text-xs font-bold text-rose-400 uppercase">💳 Công nợ khách hàng cần thu</h3>
+                  <h3 className="text-xs font-bold text-rose-400 uppercase">💳 Khách còn nợ cần thu</h3>
                   <p className="text-[11px] text-slate-300">Đang có <strong className="text-rose-300">{data.debtStats.unpaidOrdersCount}</strong> đơn hàng chưa thanh toán từ <strong className="text-rose-300">{data.debtStats.debtCustomersCount}</strong> khách hàng. Tổng nợ: <strong className="text-rose-300 font-mono text-xs">{formatCurrency(data.debtStats.totalDebtAmount)}</strong>.</p>
                 </div>
               </div>
@@ -1039,7 +1274,7 @@ export default async function AdminDashboard() {
 
       {/* SECTION 7: DASHBOARD CÔNG NỢ (#62) */}
       <div className="space-y-3">
-        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">💳 Dashboard công nợ khách hàng</h2>
+        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">💳 Tổng quan công nợ khách hàng</h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <Link href="/admin/debts" className="p-4.5 rounded-2xl bg-[#1e2330]/50 border border-white/5 hover:border-indigo-500/30 transition-all flex flex-col justify-between cursor-pointer">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">💰 Tổng nợ cần thu</p>
@@ -1155,6 +1390,122 @@ export default async function AdminDashboard() {
               ))}
               {data.topSourcesByRefund.length === 0 && (
                 <p className="text-center text-slate-500 py-4">Chưa có dữ liệu</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION: BẢNG XẾP HẠNG TOP CRM */}
+      <div className="space-y-4">
+        <h2 className="text-base font-bold text-white uppercase tracking-wider flex items-center gap-2">
+          🏆 Bảng xếp hạng CRM
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* 1. Top Khách doanh thu */}
+          <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 space-y-3">
+            <h3 className="text-xs font-bold text-indigo-400 uppercase border-b border-white/5 pb-1.5 flex items-center gap-1.5">
+              👤 Top Khách doanh thu
+            </h3>
+            <div className="space-y-2">
+              {data.topCustomersBySpend.map((c, idx) => (
+                <div key={c.id || idx} className="flex items-center justify-between text-xs">
+                  <span className="truncate max-w-[100px] text-slate-300 font-medium">
+                    {c.id ? (
+                      <Link href={`/admin/customers/${c.id}`} className="hover:text-indigo-400 transition-colors">{c.name}</Link>
+                    ) : (
+                      c.name
+                    )}
+                  </span>
+                  <span className="font-bold text-emerald-400 font-mono">{formatCurrency(c.spend)}</span>
+                </div>
+              ))}
+              {data.topCustomersBySpend.length === 0 && (
+                <p className="text-slate-500 text-[10px] text-center">Chưa có dữ liệu</p>
+              )}
+            </div>
+          </div>
+
+          {/* 2. Top Khách VIP */}
+          <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 space-y-3">
+            <h3 className="text-xs font-bold text-amber-400 uppercase border-b border-white/5 pb-1.5 flex items-center gap-1.5">
+              🌟 Top Khách VIP
+            </h3>
+            <div className="space-y-2">
+              {data.topCustomersVIP.map((c, idx) => (
+                <div key={c.id || idx} className="flex items-center justify-between text-xs">
+                  <span className="truncate max-w-[100px] text-slate-300 font-medium">
+                    {c.id ? (
+                      <Link href={`/admin/customers/${c.id}`} className="hover:text-indigo-400 transition-colors">{c.name}</Link>
+                    ) : (
+                      c.name
+                    )}
+                  </span>
+                  <span className="font-bold text-amber-400 font-mono">Hạng {c.rating} ({c.creditScore})</span>
+                </div>
+              ))}
+              {data.topCustomersVIP.length === 0 && (
+                <p className="text-slate-500 text-[10px] text-center">Chưa có dữ liệu</p>
+              )}
+            </div>
+          </div>
+
+          {/* 3. Top Khách nhiều lỗi */}
+          <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 space-y-3">
+            <h3 className="text-xs font-bold text-rose-400 uppercase border-b border-white/5 pb-1.5 flex items-center gap-1.5">
+              🚨 Top Khách nhiều lỗi
+            </h3>
+            <div className="space-y-2">
+              {data.topCustomersByErrors.map((c, idx) => (
+                <div key={c.id || idx} className="flex items-center justify-between text-xs">
+                  <span className="truncate max-w-[100px] text-slate-300 font-medium">
+                    {c.id ? (
+                      <Link href={`/admin/customers/${c.id}`} className="hover:text-indigo-400 transition-colors">{c.name}</Link>
+                    ) : (
+                      c.name
+                    )}
+                  </span>
+                  <span className="font-bold text-rose-400 font-mono">{c.errorsCount} lỗi / {c.ordersCount} đơn</span>
+                </div>
+              ))}
+              {data.topCustomersByErrors.length === 0 && (
+                <p className="text-slate-500 text-[10px] text-center">Chưa có dữ liệu</p>
+              )}
+            </div>
+          </div>
+
+          {/* 4. Top Nguồn lời nhất */}
+          <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 space-y-3">
+            <h3 className="text-xs font-bold text-teal-400 uppercase border-b border-white/5 pb-1.5 flex items-center gap-1.5">
+              🔌 Top Nguồn lời nhất
+            </h3>
+            <div className="space-y-2">
+              {data.topSourcesByProfit.map((src, idx) => (
+                <div key={src.id || idx} className="flex items-center justify-between text-xs">
+                  <span className="truncate max-w-[100px] text-slate-300 font-medium">{src.name}</span>
+                  <span className="font-bold text-teal-400 font-mono">{formatCurrency(src.profit)}</span>
+                </div>
+              ))}
+              {data.topSourcesByProfit.length === 0 && (
+                <p className="text-slate-500 text-[10px] text-center">Chưa có dữ liệu</p>
+              )}
+            </div>
+          </div>
+
+          {/* 5. Top Nguồn lỗi nhất */}
+          <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 space-y-3">
+            <h3 className="text-xs font-bold text-red-400 uppercase border-b border-white/5 pb-1.5 flex items-center gap-1.5">
+              💥 Top Nguồn lỗi nhất
+            </h3>
+            <div className="space-y-2">
+              {data.topSourcesByErrors.map((src, idx) => (
+                <div key={src.id || idx} className="flex items-center justify-between text-xs">
+                  <span className="truncate max-w-[100px] text-slate-300 font-medium">{src.name}</span>
+                  <span className="font-bold text-red-400 font-mono">{src.errorOrders} lỗi / {src.totalOrders} đơn</span>
+                </div>
+              ))}
+              {data.topSourcesByErrors.length === 0 && (
+                <p className="text-slate-500 text-[10px] text-center">Chưa có dữ liệu</p>
               )}
             </div>
           </div>

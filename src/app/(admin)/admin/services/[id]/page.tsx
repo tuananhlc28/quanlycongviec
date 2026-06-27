@@ -1,8 +1,9 @@
 import prisma from '@/lib/prisma';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateShort, getStatusLabel, getStatusColor, getPaymentStatusLabel, getPaymentStatusColor } from '@/lib/utils';
 import { Package, ArrowLeft, TrendingUp, AlertTriangle, ShoppingCart, DollarSign, Key, ShieldAlert } from 'lucide-react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import ServiceAccountCell from './ServiceAccountCell';
 
 export const revalidate = 0; // Fresh details every load
 
@@ -160,78 +161,80 @@ export default async function AdminServiceDetailPage({ params }: PageProps) {
           <h2 className="text-sm font-bold text-white uppercase tracking-wider">📋 Danh sách đơn hàng bán ra</h2>
           <p className="text-xs text-slate-400 mt-0.5">Hiển thị toàn bộ các đơn hàng đã tạo của dịch vụ này.</p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto rounded-2xl border border-white/5 bg-[#131722]/30">
+          <table className="w-full text-left">
             <thead>
-              <tr className="border-b border-white/5 text-slate-400 pb-2.5 font-bold uppercase tracking-wider">
-                <th className="py-2.5 w-12 text-center">STT</th>
-                <th className="py-2.5">Mã đơn</th>
-                <th className="py-2.5">Khách hàng</th>
-                <th className="py-2.5">Gói dịch vụ</th>
-                <th className="py-2.5">Tài khoản</th>
-                <th className="py-2.5 text-right">Giá bán</th>
-                <th className="py-2.5 text-right">Giá vốn</th>
-                <th className="py-2.5 text-center">Trạng thái</th>
-                <th className="py-2.5 text-center">Thanh toán</th>
-                <th className="py-2.5">Ngày mua</th>
+              <tr className="border-b border-white/5 bg-white/2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <th className="px-5 py-3.5 w-12 text-center">STT</th>
+                <th className="px-5 py-3.5">Mã đơn</th>
+                <th className="px-5 py-3.5">Khách hàng</th>
+                <th className="px-5 py-3.5">Gói dịch vụ</th>
+                <th className="px-5 py-3.5">Tài khoản</th>
+                <th className="px-5 py-3.5">Tài chính</th>
+                <th className="px-5 py-3.5 text-center">Trạng thái</th>
+                <th className="px-5 py-3.5 text-center">Thanh toán</th>
+                <th className="px-5 py-3.5">Ngày mua</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5 text-slate-300">
+            <tbody className="divide-y divide-white/5 text-xs text-slate-300">
               {service.orders.map((o: any, idx: number) => {
-                let statusBadge = 'bg-slate-500/10 text-slate-400 border border-slate-500/20';
-                if (o.status === 'ACTIVE') statusBadge = 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-                if (o.status === 'EXPIRING_SOON') statusBadge = 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
-                if (o.status === 'EXPIRED') statusBadge = 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
-                if (o.status.startsWith('WARRANTY')) statusBadge = 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
-
-                let paymentBadge = 'bg-slate-500/10 text-slate-400 border border-slate-500/20';
-                if (o.paymentStatus === 'PAID') paymentBadge = 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-                if (o.paymentStatus === 'UNPAID') paymentBadge = 'bg-red-500/10 text-red-400 border border-red-500/20';
-                if (o.paymentStatus === 'OVERDUE') paymentBadge = 'bg-rose-500/10 text-rose-500 border border-rose-500/20';
-
                 return (
-                  <tr key={o.id} className="hover:bg-white/[0.02] transition-colors">
-                    <td className="py-3.5 text-center font-mono text-slate-500">{idx + 1}</td>
-                    <td className="py-3.5 font-bold font-mono text-indigo-400">
+                  <tr key={o.id} className="hover:bg-white/2 transition-colors">
+                    <td className="px-5 py-4 text-center font-mono text-slate-500">{idx + 1}</td>
+                    <td className="px-5 py-4 font-bold font-mono text-indigo-400">
                       <Link href={`/admin/orders/${o.id}`} className="hover:underline">
                         {o.orderCode}
                       </Link>
                     </td>
-                    <td className="py-3.5 font-semibold text-white">
+                    <td className="px-5 py-4 font-semibold text-white">
                       {o.customer ? (
-                        <Link href={`/admin/debts/${o.customerId}`} className="hover:underline">
+                        <Link href={`/admin/customers/${o.customerId}`} className="hover:underline">
                           {o.customer.name}
                         </Link>
                       ) : (
                         <span className="text-slate-500">—</span>
                       )}
                     </td>
-                    <td className="py-3.5">{o.packageName} ({o.durationDays} ngày)</td>
-                    <td className="py-3.5 max-w-[150px] truncate" title={o.accountEmail || ''}>
-                      {o.accountEmail || <span className="text-slate-600">—</span>}
+                    <td className="px-5 py-4">{o.packageName} ({o.durationDays} ngày)</td>
+                    <td className="px-5 py-4">
+                      <ServiceAccountCell email={o.accountEmail} password={o.accountPassword} />
                     </td>
-                    <td className="py-3.5 text-right font-bold text-white font-mono">{formatCurrency(o.salePrice)}</td>
-                    <td className="py-3.5 text-right text-slate-400 font-mono">{formatCurrency(o.costPrice)}</td>
-                    <td className="py-3.5 text-center">
-                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold ${statusBadge}`}>
-                        {o.status === 'ACTIVE' ? 'Đang dùng' :
-                         o.status === 'EXPIRING_SOON' ? 'Sắp hết hạn' :
-                         o.status === 'EXPIRED' ? 'Hết hạn' : o.status}
+                    <td className="px-5 py-4 font-mono text-[11px] text-left">
+                      <div className="space-y-0.5">
+                        <p className="text-emerald-400 font-bold font-mono">Bán: {formatCurrency(o.salePrice)}</p>
+                        <p className="text-slate-400 font-mono">Vốn/Gốc: {formatCurrency(o.costPrice)}</p>
+                        <p className="text-indigo-300 font-bold font-mono">Lợi nhuận: {formatCurrency(o.profit)}</p>
+                        <p className="text-blue-400 font-mono">Đã TT: {formatCurrency(o.paidAmount)}</p>
+                        {o.salePrice - o.paidAmount > 0 ? (
+                          <p className="text-rose-400 font-semibold font-mono">Nợ: {formatCurrency(o.salePrice - o.paidAmount)}</p>
+                        ) : (
+                          <p className="text-slate-500 font-mono">Nợ: 0đ</p>
+                        )}
+                        {(() => {
+                          const totalRefund = o.refundHistories?.reduce((sum: number, r: any) => sum + r.amount, 0) || 0;
+                          return totalRefund > 0 ? (
+                            <p className="text-rose-500 font-bold border-t border-white/5 pt-0.5 mt-0.5 font-mono">Hoàn: {formatCurrency(totalRefund)}</p>
+                          ) : null;
+                        })()}
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 text-center">
+                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold border ${getStatusColor(o.status)}`}>
+                        {getStatusLabel(o.status)}
                       </span>
                     </td>
-                    <td className="py-3.5 text-center">
-                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold ${paymentBadge}`}>
-                        {o.paymentStatus === 'PAID' ? 'Đã TT' :
-                         o.paymentStatus === 'UNPAID' ? 'Chưa TT' : 'Quá hạn'}
+                    <td className="px-5 py-4 text-center">
+                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold border ${getPaymentStatusColor(o.paymentStatus)}`}>
+                        {getPaymentStatusLabel(o.paymentStatus)}
                       </span>
                     </td>
-                    <td className="py-3.5 text-slate-400 font-mono text-[11px]">{formatDate(o.createdAt)}</td>
+                    <td className="px-5 py-4 text-slate-400 font-mono text-[11px]">{formatDate(o.createdAt)}</td>
                   </tr>
                 );
               })}
               {service.orders.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="text-center py-8 text-slate-500">Dịch vụ này chưa phát sinh đơn hàng nào</td>
+                  <td colSpan={9} className="text-center py-8 text-slate-500">Dịch vụ này chưa phát sinh đơn hàng nào</td>
                 </tr>
               )}
             </tbody>

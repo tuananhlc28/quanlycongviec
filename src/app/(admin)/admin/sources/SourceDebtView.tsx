@@ -16,6 +16,7 @@ interface SourceDebtSummary {
   totalExpectedRefund: number;
   totalActualRefund: number;
   totalDebt: number;
+  totalRejectedRefund: number;
   profitImpact: number;
 }
 
@@ -62,6 +63,7 @@ export default function SourceDebtView() {
         acc.expected += curr.totalExpectedRefund;
         acc.actual += curr.totalActualRefund;
         acc.debt += curr.totalDebt;
+        acc.rejectedRefund += curr.totalRejectedRefund;
         acc.profitImpact += curr.profitImpact;
         return acc;
       },
@@ -74,6 +76,7 @@ export default function SourceDebtView() {
         expected: 0,
         actual: 0,
         debt: 0,
+        rejectedRefund: 0,
         profitImpact: 0,
       }
     );
@@ -91,7 +94,7 @@ export default function SourceDebtView() {
   return (
     <div className="space-y-6">
       {/* Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="p-5 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 flex flex-col justify-between">
           <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Tổng nguồn phải hoàn</span>
           <span className="text-2xl font-bold text-indigo-400 mt-2">{formatCurrency(totals.expected)}</span>
@@ -104,8 +107,12 @@ export default function SourceDebtView() {
           <span className="text-xs text-amber-400 font-bold uppercase tracking-wider">Còn nợ (Chưa hoàn)</span>
           <span className="text-2xl font-extrabold text-amber-400 mt-2">{formatCurrency(totals.debt)}</span>
         </div>
+        <div className="p-5 rounded-2xl bg-red-500/5 border border-red-500/10 flex flex-col justify-between">
+          <span className="text-xs text-red-400 font-bold uppercase tracking-wider">Tiền nguồn từ chối</span>
+          <span className="text-2xl font-bold text-red-400 mt-2">{formatCurrency(totals.rejectedRefund)}</span>
+        </div>
         <div className="p-5 rounded-2xl bg-rose-500/5 border border-rose-500/10 flex flex-col justify-between">
-          <span className="text-xs text-rose-400 font-bold uppercase tracking-wider">Lỗ do từ chối bảo hành</span>
+          <span className="text-xs text-rose-400 font-bold uppercase tracking-wider">Thiệt hại từ chối bảo hành</span>
           <span className="text-2xl font-bold text-rose-400 mt-2">{formatCurrency(totals.profitImpact)}</span>
         </div>
       </div>
@@ -133,6 +140,7 @@ export default function SourceDebtView() {
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-white/5 bg-white/2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              <th className="px-4 py-3.5 w-12 text-center">STT</th>
               <th className="px-4 py-3.5">Nguồn hàng</th>
               <th className="px-4 py-3.5 text-center">Tổng đơn lỗi</th>
               <th className="px-4 py-3.5 text-center">Đang chờ</th>
@@ -141,19 +149,21 @@ export default function SourceDebtView() {
               <th className="px-4 py-3.5 text-right">Dự kiến hoàn</th>
               <th className="px-4 py-3.5 text-right">Đã hoàn</th>
               <th className="px-4 py-3.5 text-right">Còn nợ</th>
+              <th className="px-4 py-3.5 text-right">Nguồn từ chối</th>
               <th className="px-4 py-3.5 text-right">Thiệt hại</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5 text-xs">
             {filteredSummaries.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-slate-500 italic">
+                <td colSpan={11} className="px-4 py-8 text-center text-slate-500 italic">
                   Không tìm thấy dữ liệu công nợ nguồn nào
                 </td>
               </tr>
             ) : (
-              filteredSummaries.map((s) => (
+              filteredSummaries.map((s, idx) => (
                 <tr key={s.sourceId} className="hover:bg-white/3 transition-colors">
+                  <td className="px-4 py-3.5 text-center text-slate-500 font-mono">{idx + 1}</td>
                   <td className="px-4 py-3.5 font-bold text-white">{s.sourceName}</td>
                   <td className="px-4 py-3.5 text-center text-slate-300">{s.totalOrders}</td>
                   <td className="px-4 py-3.5 text-center">
@@ -184,6 +194,9 @@ export default function SourceDebtView() {
                   >
                     {formatCurrency(s.totalDebt)}
                   </td>
+                  <td className="px-4 py-3.5 text-right font-mono text-red-400 font-bold">
+                    {formatCurrency(s.totalRejectedRefund)}
+                  </td>
                   <td className="px-4 py-3.5 text-right font-mono text-rose-400">
                     {formatCurrency(s.profitImpact)}
                   </td>
@@ -194,7 +207,7 @@ export default function SourceDebtView() {
             {/* Total Row */}
             {filteredSummaries.length > 0 && (
               <tr className="bg-white/2 font-bold border-t border-white/10">
-                <td className="px-4 py-3.5 text-white">Tổng cộng</td>
+                <td colSpan={2} className="px-4 py-3.5 text-white">Tổng cộng</td>
                 <td className="px-4 py-3.5 text-center text-white">{totals.totalOrders}</td>
                 <td className="px-4 py-3.5 text-center text-purple-300">{totals.pending}</td>
                 <td className="px-4 py-3.5 text-center text-emerald-300">{totals.refunded}</td>
@@ -206,6 +219,7 @@ export default function SourceDebtView() {
                   {formatCurrency(totals.actual)}
                 </td>
                 <td className="px-4 py-3.5 text-right font-mono text-amber-400">{formatCurrency(totals.debt)}</td>
+                <td className="px-4 py-3.5 text-right font-mono text-red-400">{formatCurrency(totals.rejectedRefund)}</td>
                 <td className="px-4 py-3.5 text-right font-mono text-rose-400">
                   {formatCurrency(totals.profitImpact)}
                 </td>

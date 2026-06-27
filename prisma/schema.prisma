@@ -224,6 +224,8 @@ model Order {
   isPinned        Boolean  @default(false)
   color           String?  // Hex or tag name for row highlighting
   createdBy       String?  // Staff username/email who created this order
+  isUnlocked      Boolean  @default(false)
+  unlockReason    String?
 
   // Relations
   refundHistories     RefundHistory[]

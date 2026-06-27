@@ -2,32 +2,32 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { HelpCircle, X } from 'lucide-react';
+import { HelpCircle, X, Command } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-export default function KeyboardShortcuts() {
+interface KeyboardShortcutsProps {
+  onOpenCommandPalette?: () => void;
+}
+
+export default function KeyboardShortcuts({ onOpenCommandPalette }: KeyboardShortcutsProps) {
   const router = useRouter();
   const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // 1. Ctrl + K: Focus search bar or show help
+      // 1. Ctrl + K: Open Command Palette
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        const searchInput = document.querySelector('input[placeholder*="Tìm"], input[placeholder*="search"], input[type="text"]') as HTMLInputElement;
-        if (searchInput) {
-          searchInput.focus();
-          searchInput.select();
-          toast.success('🔍 Đã tập trung vào thanh tìm kiếm', { id: 'focus-search', duration: 1500 });
-        } else {
-          setShowHelp(prev => !prev);
+        if (onOpenCommandPalette) {
+          onOpenCommandPalette();
         }
+        return;
       }
 
-      // 2. Ctrl + N: Open new order form or page
+      // 2. Ctrl + N: Open new order form
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
-        const createOrderBtn = document.querySelector('button[title*="Tạo đơn"], button[title*="create"], a[href*="create=true"]') as HTMLButtonElement | HTMLAnchorElement;
+        const createOrderBtn = document.querySelector('button[title*="Tạo đơn"], a[href*="create=true"]') as HTMLButtonElement | HTMLAnchorElement;
         if (createOrderBtn) {
           createOrderBtn.click();
         } else {
@@ -53,7 +53,7 @@ export default function KeyboardShortcuts() {
           e.preventDefault();
           return;
         }
-        const closeBtn = document.querySelector('button[title*="Đóng"], button[title*="close"], button svg[class*="lucide-x"]') as HTMLButtonElement;
+        const closeBtn = document.querySelector('button[title*="Đóng"], button[title*="close"]') as HTMLButtonElement;
         if (closeBtn) {
           closeBtn.click();
           e.preventDefault();
@@ -63,11 +63,11 @@ export default function KeyboardShortcuts() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [router, showHelp]);
+  }, [router, showHelp, onOpenCommandPalette]);
 
   return (
     <>
-      {/* Floating help button for solo admin */}
+      {/* Floating help button */}
       <button
         onClick={() => setShowHelp(true)}
         className="fixed bottom-4 right-4 z-40 p-2.5 rounded-full bg-indigo-600/90 hover:bg-indigo-500 text-white shadow-lg transition-all hover:scale-105 group border border-indigo-400/20"
@@ -93,7 +93,9 @@ export default function KeyboardShortcuts() {
             <h3 className="text-base font-bold text-white mb-4">⌨️ Phím tắt hệ thống CRM</h3>
             <div className="space-y-3.5 text-xs text-slate-300">
               <div className="flex justify-between items-center py-1.5 border-b border-white/5">
-                <span>Tìm kiếm / Focus input</span>
+                <span className="flex items-center gap-2">
+                  <Command className="w-3.5 h-3.5 text-indigo-400" /> Mở Command Palette
+                </span>
                 <kbd className="px-2 py-1 rounded bg-white/10 text-white font-mono text-[10px]">Ctrl + K</kbd>
               </div>
               <div className="flex justify-between items-center py-1.5 border-b border-white/5">
@@ -113,7 +115,7 @@ export default function KeyboardShortcuts() {
                 <kbd className="px-2 py-1 rounded bg-white/10 text-white font-mono text-[10px]">Enter</kbd>
               </div>
             </div>
-            
+
             <p className="text-[10px] text-slate-500 mt-5 text-center">Tối ưu thao tác nhanh cho quản trị viên đơn lẻ.</p>
           </div>
         </div>

@@ -19,6 +19,9 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatCurrency, formatDateShort } from '@/lib/utils';
+import TimeFilterDropdown, { TimeRange, DateRange } from '@/components/shared/TimeFilterDropdown';
+import ColumnVisibilityToggle from '@/components/shared/ColumnVisibilityToggle';
+import { saveColumnVisibility, loadColumnVisibility } from '@/lib/tableUtils';
 
 interface RefundRecord {
   id: string;
@@ -80,6 +83,10 @@ interface RefundDashboard {
   totalProfitAfterRefund: number;
   totalPending: number;
   totalRefundCount: number;
+  totalClientRefundedCount: number;
+  totalPendingSourceCount: number;
+  totalPendingClientCount: number;
+  totalRejectedSourceCount: number;
 }
 
 export default function AdminRefundsPage() {
@@ -98,6 +105,63 @@ export default function AdminRefundsPage() {
   const [selectedService, setSelectedService] = useState('');
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
+
+  // Time Filter States
+  const [timeRange, setTimeRange] = useState<TimeRange>('all');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [dateRange, setDateRange] = useState<DateRange | null>(null);
+
+  // Column Visibility States
+  const COLUMNS_CONFIG = [
+    { id: 'createdAt', label: 'Ngày hoàn' },
+    { id: 'orderCode', label: 'Mã đơn' },
+    { id: 'customer', label: 'Khách hàng' },
+    { id: 'service', label: 'Dịch vụ & Gói' },
+    { id: 'financials', label: 'Giá bán / Vốn' },
+    { id: 'amount', label: 'Hoàn khách' },
+    { id: 'sourceRefund', label: 'Nguồn hoàn' },
+    { id: 'netProfit', label: 'Lợi nhuận ròng' },
+    { id: 'sourceStatus', label: 'Trạng thái nguồn' },
+  ];
+  const DEFAULT_COLUMNS = ['createdAt', 'orderCode', 'customer', 'service', 'financials', 'amount', 'sourceRefund', 'netProfit', 'sourceStatus'];
+  const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
+
+  useEffect(() => {
+    const saved = loadColumnVisibility('admin_refunds_columns');
+    setVisibleColumns(saved.length > 0 ? saved : DEFAULT_COLUMNS);
+  }, []);
+
+  const handleToggleColumn = (colId: string) => {
+    const next = visibleColumns.includes(colId)
+      ? visibleColumns.filter(id => id !== colId)
+      : [...visibleColumns, colId];
+    setVisibleColumns(next);
+    saveColumnVisibility('admin_refunds_columns', next);
+  };
+
+  // Sort states
+  const [sortCol, setSortCol] = useState<string>('createdAt');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>('desc');
+
+  const handleSort = (col: string) => {
+    if (sortCol !== col) {
+      setSortCol(col);
+      setSortDir('asc');
+    } else if (sortDir === 'asc') {
+      setSortDir('desc');
+    } else {
+      setSortCol('createdAt');
+      setSortDir('desc');
+    }
+    setPage(1);
+  };
+
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortCol !== col) return <span className="ml-1 text-slate-500 hover:text-slate-300">⇅</span>;
+    if (sortDir === 'asc') return <span className="ml-1 text-indigo-400">▲</span>;
+    return <span className="ml-1 text-indigo-400">▼</span>;
+  };
 
   // Editing state for source amount and status
   const [editingRefundId, setEditingRefundId] = useState<string | null>(null);
@@ -150,6 +214,7 @@ export default function AdminRefundsPage() {
         }));
         setEditingRefundId(null);
         router.refresh();
+        fetchRefunds();
       } else {
         const data = await res.json();
         toast.error(data.error || 'Lỗi khi cập nhật nguồn hoàn');
@@ -162,57 +227,6 @@ export default function AdminRefundsPage() {
     }
   };
 
-  const handlePreset = (preset: string) => {
-    const now = new Date();
-    let start = new Date(now);
-    let end = new Date(now);
-
-    const formatDateString = (d: Date) => {
-      return d.toISOString().split('T')[0];
-    };
-
-    switch (preset) {
-      case 'today':
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '3days':
-        start.setDate(start.getDate() - 2);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '7days':
-        start.setDate(start.getDate() - 6);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '30days':
-        start.setDate(start.getDate() - 29);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '3months':
-        start.setMonth(start.getMonth() - 3);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '6months':
-        start.setMonth(start.getMonth() - 6);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '1year':
-        start.setFullYear(start.getFullYear() - 1);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case 'all':
-        setDateStart('');
-        setDateEnd('');
-        break;
-    }
-    setPage(1);
-  };
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Debounce search
@@ -251,6 +265,8 @@ export default function AdminRefundsPage() {
         dateEnd,
         page: page.toString(),
         limit: '10',
+        sortBy: sortCol,
+        sortOrder: sortDir || 'desc',
       }).toString();
 
       const res = await fetch(`/api/admin/refunds?${query}`);
@@ -268,7 +284,7 @@ export default function AdminRefundsPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, selectedService, dateStart, dateEnd, page]);
+  }, [debouncedSearch, selectedService, dateStart, dateEnd, page, sortCol, sortDir]);
 
   useEffect(() => {
     fetchRefunds();
@@ -365,54 +381,69 @@ export default function AdminRefundsPage() {
           className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-slate-300 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all disabled:opacity-50 cursor-pointer self-start sm:self-auto"
         >
           <Download className="w-4 h-4" />
-          Xuất báo cáo CSV
+          Xuất Excel
         </button>
       </div>
 
-      {/* Finance Navigation Tabs */}
-      <div className="flex border-b border-white/5">
-        <Link
-          href="/admin/refunds"
-          className="px-5 py-2.5 text-sm font-bold border-b-2 border-indigo-500 text-white transition-all"
-        >
-          Lịch sử hoàn tiền
-        </Link>
-        <Link
-          href="/admin/reports"
-          className="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-white transition-all"
-        >
-          Báo cáo & Thống kê
-        </Link>
-      </div>
+
 
       {/* Refund Dashboard Stats */}
       {refundDashboard && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/15">
-            <p className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">💸 Đã hoàn khách</p>
-            <p className="text-2xl font-black text-rose-400 mt-1">{formatCurrency(refundDashboard.totalClientRefundActual)}</p>
-            <p className="text-[10px] text-slate-500 mt-1">{refundDashboard.totalRefundCount} giao dịch</p>
+        <div className="space-y-4">
+          {/* Row 1: Counts */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+            <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/15">
+              <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">📦 Tổng đơn hoàn tiền</p>
+              <p className="text-2xl font-black text-indigo-400 mt-1">{refundDashboard.totalRefundCount}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">Tổng số giao dịch</p>
+            </div>
+            <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/15">
+              <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">⏳ Chờ hoàn khách</p>
+              <p className="text-2xl font-black text-amber-400 mt-1">{refundDashboard.totalPendingClientCount}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">Khách chưa nhận tiền</p>
+            </div>
+            <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/15">
+              <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">✅ Tổng đơn đã hoàn</p>
+              <p className="text-2xl font-black text-emerald-400 mt-1">{refundDashboard.totalClientRefundedCount}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">Đã hoàn tiền khách</p>
+            </div>
+            <div className="p-4 rounded-2xl bg-blue-500/5 border border-blue-500/15">
+              <p className="text-[10px] font-bold text-blue-400 uppercase tracking-wider">🔌 Tổng đơn chờ nguồn</p>
+              <p className="text-2xl font-black text-blue-400 mt-1">{refundDashboard.totalPendingSourceCount}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">Chờ nguồn xử lý</p>
+            </div>
+            <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/15">
+              <p className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">❌ Tổng đơn bị từ chối</p>
+              <p className="text-2xl font-black text-rose-400 mt-1">{refundDashboard.totalRejectedSourceCount}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">Nguồn từ chối hoàn</p>
+            </div>
           </div>
-          <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/15">
-            <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">✅ Nguồn đã hoàn</p>
-            <p className="text-2xl font-black text-emerald-400 mt-1">{formatCurrency(refundDashboard.totalSourceRefundActual)}</p>
-            <p className="text-[10px] text-slate-500 mt-1">Dự kiến: {formatCurrency(refundDashboard.totalSourceRefundExpected)}</p>
-          </div>
-          <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/15">
-            <p className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">⏳ Nguồn còn nợ</p>
-            <p className="text-2xl font-black text-amber-400 mt-1">{formatCurrency(refundDashboard.totalSourceDebt)}</p>
-            <p className="text-[10px] text-slate-500 mt-1">Đang chờ: {formatCurrency(refundDashboard.totalPending)}</p>
-          </div>
-          <div className={`p-4 rounded-2xl border ${refundDashboard.totalProfitAfterRefund >= 0 ? 'bg-emerald-500/5 border-emerald-500/15' : 'bg-red-500/5 border-red-500/15'}`}>
-            <p className={`text-[10px] font-bold uppercase tracking-wider ${refundDashboard.totalProfitAfterRefund >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>📊 LN sau hoàn</p>
-            <p className={`text-2xl font-black mt-1 ${refundDashboard.totalProfitAfterRefund >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(refundDashboard.totalProfitAfterRefund)}</p>
-            <p className="text-[10px] text-slate-500 mt-1">Chênh lệch: {refundDashboard.refundDiff >= 0 ? '+' : ''}{formatCurrency(refundDashboard.refundDiff)}</p>
+
+          {/* Row 2: Financials */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/15">
+              <p className="text-[10px] font-bold text-rose-400 uppercase tracking-wider">💸 Tổng tiền hoàn khách</p>
+              <p className="text-2xl font-black text-rose-400 mt-1">{formatCurrency(refundDashboard.totalClientRefundActual)}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">Thực tế đã chuyển khoản</p>
+            </div>
+            <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/15">
+              <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">🔌 Tổng tiền nguồn hoàn</p>
+              <p className="text-2xl font-black text-emerald-400 mt-1">{formatCurrency(refundDashboard.totalSourceRefundActual)}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">
+                Dự kiến: {formatCurrency(refundDashboard.totalSourceRefundExpected)} | Nợ: {formatCurrency(refundDashboard.totalSourceDebt)}
+              </p>
+            </div>
+            <div className={`p-4 rounded-2xl border ${refundDashboard.totalProfitAfterRefund >= 0 ? 'bg-emerald-500/5 border-emerald-500/15' : 'bg-red-500/5 border-red-500/15'}`}>
+              <p className={`text-[10px] font-bold uppercase tracking-wider ${refundDashboard.totalProfitAfterRefund >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>📊 Tổng lợi nhuận sau hoàn</p>
+              <p className={`text-2xl font-black mt-1 ${refundDashboard.totalProfitAfterRefund >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatCurrency(refundDashboard.totalProfitAfterRefund)}</p>
+              <p className="text-[9px] text-slate-500 mt-0.5">Chênh lệch: {refundDashboard.refundDiff >= 0 ? '+' : ''}{formatCurrency(refundDashboard.refundDiff)}</p>
+            </div>
           </div>
         </div>
       )}
 
       {/* Filter panel */}
-      <div className="p-4 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-4">
+      <div className="p-4 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {/* Search */}
           <div className="relative">
@@ -438,73 +469,41 @@ export default function AdminRefundsPage() {
             ))}
           </select>
 
-          {/* Date boundaries */}
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span>Từ:</span>
-            <input
-              type="date"
-              value={dateStart}
-              onChange={(e) => { setDateStart(e.target.value); setPage(1); }}
-              className="px-2 py-1 rounded bg-[#131722] border border-white/10 text-white text-xs w-full"
+          {/* TimeFilterDropdown */}
+          <TimeFilterDropdown
+            value={timeRange}
+            onChange={(range, dates) => {
+              setTimeRange(range);
+              setDateRange(dates);
+              if (range !== 'custom' && dates) {
+                setDateStart(dates.start);
+                setDateEnd(dates.end);
+              } else if (range === 'all') {
+                setDateStart('');
+                setDateEnd('');
+              }
+              setPage(1);
+            }}
+            customStart={customStart}
+            customEnd={customEnd}
+            onCustomChange={(s, e) => {
+              setCustomStart(s);
+              setCustomEnd(e);
+              setDateStart(s);
+              setDateEnd(e);
+              setPage(1);
+            }}
+          />
+
+          {/* ColumnVisibilityToggle */}
+          <div className="flex justify-end">
+            <ColumnVisibilityToggle
+              columns={COLUMNS_CONFIG}
+              visibleColumns={visibleColumns}
+              onToggle={handleToggleColumn}
+              storageKey="admin_refunds_columns"
             />
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span>Đến:</span>
-            <input
-              type="date"
-              value={dateEnd}
-              onChange={(e) => { setDateEnd(e.target.value); setPage(1); }}
-              className="px-2 py-1 rounded bg-[#131722] border border-white/10 text-white text-xs w-full"
-            />
-          </div>
-        </div>
-
-        {/* Quick Date Presets */}
-        <div className="flex flex-wrap gap-1.5 items-center border-t border-white/5 pt-3">
-          <span className="text-[10px] text-slate-500 uppercase font-bold mr-2">Lọc nhanh:</span>
-          {[
-            { label: 'Hôm nay', value: 'today' },
-            { label: '3 ngày', value: '3days' },
-            { label: '7 ngày', value: '7days' },
-            { label: '30 ngày', value: '30days' },
-            { label: '3 tháng', value: '3months' },
-            { label: '6 tháng', value: '6months' },
-            { label: '1 năm', value: '1year' },
-            { label: 'Tất cả', value: 'all' },
-          ].map((p) => {
-            const dates = (() => {
-              const now = new Date();
-              let start = new Date(now);
-              let end = new Date(now);
-              const f = (d: Date) => d.toISOString().split('T')[0];
-              if (p.value === 'today') return { start: f(start), end: f(end) };
-              if (p.value === '3days') { start.setDate(start.getDate() - 2); return { start: f(start), end: f(end) }; }
-              if (p.value === '7days') { start.setDate(start.getDate() - 6); return { start: f(start), end: f(end) }; }
-              if (p.value === '30days') { start.setDate(start.getDate() - 29); return { start: f(start), end: f(end) }; }
-              if (p.value === '3months') { start.setMonth(start.getMonth() - 3); return { start: f(start), end: f(end) }; }
-              if (p.value === '6months') { start.setMonth(start.getMonth() - 6); return { start: f(start), end: f(end) }; }
-              if (p.value === '1year') { start.setFullYear(start.getFullYear() - 1); return { start: f(start), end: f(end) }; }
-              return { start: '', end: '' };
-            })();
-            const isActive = p.value === 'all' 
-              ? (!dateStart && !dateEnd)
-              : (dateStart === dates.start && dateEnd === dates.end);
-
-            return (
-              <button
-                key={p.value}
-                type="button"
-                onClick={() => handlePreset(p.value)}
-                className={`px-2.5 py-1 text-xs rounded-lg font-semibold transition-all border cursor-pointer ${
-                  isActive
-                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/10'
-                    : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 text-slate-300'
-                }`}
-              >
-                {p.label}
-              </button>
-            );
-          })}
         </div>
 
         <div className="flex justify-between items-center pt-2 border-t border-white/5 text-xs text-slate-500">
@@ -521,26 +520,26 @@ export default function AdminRefundsPage() {
         </div>
       </div>
 
-      {/* Refunds Table */}
-      <div className="overflow-x-auto rounded-2xl border border-white/5 bg-[#131722]/30">
+      {/* Refunds table */}
+      <div className="overflow-x-auto rounded-2xl bg-[#131722]/50 border border-white/5">
         <table className="w-full text-left table-fixed">
           <thead>
             <tr className="border-b border-white/5 bg-white/2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-              <th className="px-6 py-4 w-[10%]">Ngày hoàn</th>
-              <th className="px-6 py-4 w-[10%]">Mã đơn</th>
-              <th className="px-6 py-4 w-[15%]">Khách hàng</th>
-              <th className="px-6 py-4 w-[18%]">Dịch vụ & Gói</th>
-              <th className="px-6 py-4 w-[12%]">Giá bán / Vốn</th>
-              <th className="px-6 py-4 w-[10%]">Hoàn khách</th>
-              <th className="px-6 py-4 w-[10%]">Nguồn hoàn</th>
-              <th className="px-6 py-4 w-[12%]">Lợi nhuận ròng</th>
-              <th className="px-6 py-4 w-[13%]">Trạng thái nguồn</th>
+              {visibleColumns.includes('createdAt') && <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('createdAt')}>Ngày hoàn <SortIcon col="createdAt" /></th>}
+              {visibleColumns.includes('orderCode') && <th className="px-6 py-4">Mã đơn</th>}
+              {visibleColumns.includes('customer') && <th className="px-6 py-4">Khách hàng</th>}
+              {visibleColumns.includes('service') && <th className="px-6 py-4">Dịch vụ & Gói</th>}
+              {visibleColumns.includes('financials') && <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('salePrice')}>Giá bán / Vốn <SortIcon col="salePrice" /></th>}
+              {visibleColumns.includes('amount') && <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('amount')}>Hoàn khách <SortIcon col="amount" /></th>}
+              {visibleColumns.includes('sourceRefund') && <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('sourceRefundActual')}>Nguồn hoàn <SortIcon col="sourceRefundActual" /></th>}
+              {visibleColumns.includes('netProfit') && <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('netProfitAfterRefund')}>Lợi nhuận ròng <SortIcon col="netProfitAfterRefund" /></th>}
+              {visibleColumns.includes('sourceStatus') && <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors text-right" onClick={() => handleSort('sourceStatus')}>Trạng thái nguồn <SortIcon col="sourceStatus" /></th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5 text-sm text-slate-300">
             {loading ? (
               <tr>
-                <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                <td colSpan={visibleColumns.length} className="px-6 py-12 text-center text-slate-500">
                   <div className="flex items-center justify-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
                     Đang tải dữ liệu hoàn tiền...
@@ -549,7 +548,7 @@ export default function AdminRefundsPage() {
               </tr>
             ) : refunds.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                <td colSpan={visibleColumns.length} className="px-6 py-12 text-center text-slate-500">
                   Không tìm thấy bản ghi hoàn tiền nào
                 </td>
               </tr>
@@ -576,7 +575,7 @@ export default function AdminRefundsPage() {
 
                 return (
                   <tr key={rh.id} className="hover:bg-white/2 transition-colors border-b border-white/5">
-                    <td colSpan={9} className="p-0">
+                    <td colSpan={visibleColumns.length} className="p-0">
                       {/* Main standard row clickable to expand */}
                       <table className="w-full text-left table-fixed">
                         <tbody>
@@ -584,55 +583,73 @@ export default function AdminRefundsPage() {
                             onClick={() => setExpandedRowId(isExpanded ? null : rh.id)}
                             className="cursor-pointer hover:bg-white/5 transition-colors"
                           >
-                            <td className="px-6 py-4 text-xs font-medium w-[10%]">
-                              {new Date(rh.createdAt).toLocaleDateString('vi-VN')}
-                            </td>
-                            <td className="px-6 py-4 font-bold text-indigo-400 w-[10%]">
-                              {rh.order.orderCode}
-                            </td>
-                            <td className="px-6 py-4 w-[15%]">
-                              <div>
-                                <p className="font-bold text-white text-sm">{rh.order.customer.name}</p>
-                                <p className="text-[11px] text-slate-500 mt-0.5">{rh.order.customer.phone || 'Không có SĐT'}</p>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 w-[18%]">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xl">{rh.order.service.logo || '🔑'}</span>
+                            {visibleColumns.includes('createdAt') && (
+                              <td className="px-6 py-4 text-xs font-medium w-[10%]">
+                                {new Date(rh.createdAt).toLocaleDateString('vi-VN')}
+                              </td>
+                            )}
+                            {visibleColumns.includes('orderCode') && (
+                              <td className="px-6 py-4 font-bold text-indigo-400 w-[10%]">
+                                {rh.order.orderCode}
+                              </td>
+                            )}
+                            {visibleColumns.includes('customer') && (
+                              <td className="px-6 py-4 w-[15%]">
                                 <div>
-                                  <p className="font-semibold text-white truncate max-w-[130px]">{rh.order.service.name}</p>
-                                  <p className="text-xs text-slate-500 truncate max-w-[130px]">{rh.order.packageName}</p>
+                                  <p className="font-bold text-white text-sm">{rh.order.customer.name}</p>
+                                  <p className="text-[11px] text-slate-500 mt-0.5">{rh.order.customer.phone || 'Không có SĐT'}</p>
                                 </div>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 text-xs w-[12%]">
-                              <div>
-                                <p className="text-slate-300 font-medium">{formatCurrency(rh.order.salePrice)}</p>
-                                <p className="text-[10px] text-slate-500 mt-0.5">Vốn: {formatCurrency(rh.order.costPrice)}</p>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 w-[10%] font-mono">
-                              <strong className="text-rose-400 font-semibold">{formatCurrency(rh.amount)}</strong>
-                            </td>
-                            <td className="px-6 py-4 w-[10%] font-mono">
-                              <strong className="text-emerald-400 font-semibold">+{formatCurrency(rh.sourceRefundActual ?? rh.sourceAmount ?? 0)}</strong>
-                              <p className="text-[10px] text-slate-500 mt-0.5">Dự kiến: {formatCurrency(rh.sourceRefundExpected ?? 0)}</p>
-                            </td>
-                            <td className="px-6 py-4 w-[12%] font-mono">
-                              <div>
-                                <p className={`font-bold ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                  {netProfit > 0 ? '+' : ''}{formatCurrency(netProfit)}
-                                </p>
-                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold mt-1 ${profitBadge}`}>
-                                  {profitLabel}
+                              </td>
+                            )}
+                            {visibleColumns.includes('service') && (
+                              <td className="px-6 py-4 w-[18%]">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xl">{rh.order.service.logo || '🔑'}</span>
+                                  <div>
+                                    <p className="font-semibold text-white truncate max-w-[130px]">{rh.order.service.name}</p>
+                                    <p className="text-xs text-slate-500 truncate max-w-[130px]">{rh.order.packageName}</p>
+                                  </div>
+                                </div>
+                              </td>
+                            )}
+                            {visibleColumns.includes('financials') && (
+                              <td className="px-6 py-4 text-xs w-[12%]">
+                                <div>
+                                  <p className="text-slate-300 font-medium">{formatCurrency(rh.order.salePrice)}</p>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Vốn: {formatCurrency(rh.order.costPrice)}</p>
+                                </div>
+                              </td>
+                            )}
+                            {visibleColumns.includes('amount') && (
+                              <td className="px-6 py-4 w-[10%] font-mono">
+                                <strong className="text-rose-400 font-semibold">{formatCurrency(rh.amount)}</strong>
+                              </td>
+                            )}
+                            {visibleColumns.includes('sourceRefund') && (
+                              <td className="px-6 py-4 w-[10%] font-mono">
+                                <strong className="text-emerald-400 font-semibold">+{formatCurrency(rh.sourceRefundActual ?? rh.sourceAmount ?? 0)}</strong>
+                                <p className="text-[10px] text-slate-500 mt-0.5">Dự kiến: {formatCurrency(rh.sourceRefundExpected ?? 0)}</p>
+                              </td>
+                            )}
+                            {visibleColumns.includes('netProfit') && (
+                              <td className="px-6 py-4 w-[12%] font-mono">
+                                <div>
+                                  <p className={`font-bold ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {netProfit > 0 ? '+' : ''}{formatCurrency(netProfit)}
+                                  </p>
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold mt-1 ${profitBadge}`}>
+                                    {profitLabel}
+                                  </span>
+                                </div>
+                              </td>
+                            )}
+                            {visibleColumns.includes('sourceStatus') && (
+                              <td className="px-6 py-4 w-[13%] text-right">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold ${statusBadge}`}>
+                                  {sourceStatusLabels[rh.sourceStatus] || rh.sourceStatus}
                                 </span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 w-[13%]">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold ${statusBadge}`}>
-                                {sourceStatusLabels[rh.sourceStatus] || rh.sourceStatus}
-                              </span>
-                            </td>
+                              </td>
+                            )}
                           </tr>
                         </tbody>
                       </table>

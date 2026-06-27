@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Filter, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
+import TimeFilterDropdown, { TimeRange, DateRange } from '@/components/shared/TimeFilterDropdown';
 
 interface AdvancedFilterProps {
   // Search
@@ -26,11 +27,15 @@ interface AdvancedFilterProps {
   selectedPaymentStatus?: string;
   setSelectedPaymentStatus?: (val: string) => void;
 
-  // Dates
-  dateStart: string;
-  setDateStart: (val: string) => void;
-  dateEnd: string;
-  setDateEnd: (val: string) => void;
+  // Time Filter
+  timeRange: TimeRange;
+  setTimeRange: (range: TimeRange) => void;
+  dateRange: DateRange | null;
+  setDateRange: (range: DateRange | null) => void;
+  customStart: string;
+  setCustomStart: (val: string) => void;
+  customEnd: string;
+  setCustomEnd: (val: string) => void;
 
   // Actions
   onReset: () => void;
@@ -52,10 +57,14 @@ export default function AdvancedFilter({
   paymentStatuses = [],
   selectedPaymentStatus = '',
   setSelectedPaymentStatus,
-  dateStart,
-  setDateStart,
-  dateEnd,
-  setDateEnd,
+  timeRange,
+  setTimeRange,
+  dateRange,
+  setDateRange,
+  customStart,
+  setCustomStart,
+  customEnd,
+  setCustomEnd,
   onReset,
 }: AdvancedFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -67,17 +76,7 @@ export default function AdvancedFilter({
   if (selectedSource) activeFiltersCount++;
   if (selectedStatus) activeFiltersCount++;
   if (selectedPaymentStatus) activeFiltersCount++;
-  if (dateStart || dateEnd) activeFiltersCount++;
-
-  const handleQuickPreset = (days: number) => {
-    const now = new Date();
-    const start = new Date();
-    start.setDate(now.getDate() - days);
-
-    const f = (d: Date) => d.toISOString().split('T')[0];
-    setDateStart(f(start));
-    setDateEnd(f(now));
-  };
+  if (timeRange !== 'all') activeFiltersCount++;
 
   const handleReset = () => {
     onReset();
@@ -101,6 +100,22 @@ export default function AdvancedFilter({
             )}
             {isOpen ? <ChevronUp className="w-3 h-3 text-slate-400" /> : <ChevronDown className="w-3 h-3 text-slate-400" />}
           </button>
+
+          {/* Time Filter Dropdown in the header directly! */}
+          <TimeFilterDropdown
+            value={timeRange}
+            onChange={(range, dates) => {
+              setTimeRange(range);
+              setDateRange(dates);
+            }}
+            customStart={customStart}
+            customEnd={customEnd}
+            onCustomChange={(s, e) => {
+              setCustomStart(s);
+              setCustomEnd(e);
+            }}
+            size="sm"
+          />
 
           {/* Quick status pill display */}
           <div className="hidden sm:flex items-center gap-1.5 text-[10px] text-slate-400">
@@ -133,52 +148,6 @@ export default function AdvancedFilter({
 
       {/* Expanded Filter Panel */}
       <div className={`transition-all duration-300 ${isOpen ? 'max-h-[600px] border-t border-white/5 opacity-100 p-4 space-y-4' : 'max-h-0 opacity-0 pointer-events-none'}`}>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Custom Date Range */}
-          <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Từ ngày</label>
-            <input
-              type="date"
-              value={dateStart}
-              onChange={(e) => setDateStart(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-[#131722]/60 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none transition-all"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Đến ngày</label>
-            <input
-              type="date"
-              value={dateEnd}
-              onChange={(e) => setDateEnd(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-[#131722]/60 border border-white/10 text-white text-xs focus:border-indigo-500 focus:outline-none transition-all"
-            />
-          </div>
-
-          {/* Quick Date Presets */}
-          <div className="lg:col-span-2 space-y-1.5">
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Lọc nhanh thời gian</label>
-            <div className="flex flex-wrap gap-1.5">
-              {[
-                { label: 'Hôm nay', days: 0 },
-                { label: '3 ngày', days: 3 },
-                { label: '7 ngày', days: 7 },
-                { label: '30 ngày', days: 30 },
-                { label: '90 ngày', days: 90 },
-              ].map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => handleQuickPreset(preset.days)}
-                  className="px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-[10px] font-bold text-slate-300 transition-all cursor-pointer"
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Service Option */}
           {setSelectedService && services.length > 0 && (

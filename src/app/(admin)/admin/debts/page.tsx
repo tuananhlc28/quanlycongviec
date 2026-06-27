@@ -358,6 +358,7 @@ export default function DebtsPage() {
           <table className="w-full text-sm text-left">
             <thead>
               <tr className="border-b border-white/5 bg-white/2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                <th className="px-6 py-4 w-12 text-center">STT</th>
                 <th className="px-6 py-4 w-12 text-center">
                   <input
                     type="checkbox"
@@ -380,8 +381,9 @@ export default function DebtsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {debts.map((d) => (
+              {debts.map((d, idx) => (
                 <tr key={d.customerId} className="hover:bg-white/2 transition-colors">
+                  <td className="px-6 py-4 w-12 text-center text-slate-500 font-mono text-xs">{(page - 1) * 20 + idx + 1}</td>
                   <td className="px-6 py-4 w-12 text-center">
                     <input
                       type="checkbox"
@@ -430,7 +432,7 @@ export default function DebtsPage() {
 
               {debts.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
                     <CheckCircle className="w-10 h-10 mx-auto mb-3 text-emerald-500/40" />
                     <p className="text-sm">Không có công nợ nào {search ? `với từ khóa "${search}"` : ''}</p>
                   </td>

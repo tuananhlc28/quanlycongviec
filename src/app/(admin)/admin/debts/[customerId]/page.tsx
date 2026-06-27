@@ -199,12 +199,29 @@ export default function CustomerDebtDetailPage() {
           </div>
           <p className="text-2xl font-black mt-1">{ratingConfig.label}</p>
           <div className="absolute right-0 top-16 hidden group-hover:block w-72 bg-slate-900 border border-slate-700 p-3 rounded-xl shadow-2xl z-50 text-[11px] leading-relaxed text-slate-300 space-y-2 font-normal text-left">
-            <p className="font-bold text-white border-b border-slate-700 pb-1">Giải nghĩa xếp hạng uy tín:</p>
-            <p><span className="font-bold text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded">A+</span> Thanh toán luôn đúng hạn. Không nợ. Khách VIP.</p>
-            <p><span className="font-bold text-blue-400 bg-blue-500/10 px-1 py-0.2 rounded">A</span> Rất uy tín. Hiếm khi thanh toán trễ.</p>
-            <p><span className="font-bold text-amber-400 bg-amber-500/10 px-1 py-0.2 rounded">B</span> Thỉnh thoảng thanh toán trễ. Có thể bán tiếp.</p>
-            <p><span className="font-bold text-orange-400 bg-orange-500/10 px-1 py-0.2 rounded">C</span> Thường xuyên thanh toán trễ. Cần theo dõi.</p>
-            <p><span className="font-bold text-red-400 bg-red-500/10 px-1 py-0.2 rounded">D</span> Nợ nhiều. Thanh toán rất chậm. Hạn chế giao trước.</p>
+            <p className="font-bold text-white border-b border-slate-700 pb-1">
+              Giải nghĩa xếp hạng uy tín:
+            </p>
+            <p>
+              <span className="font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded text-[10px]">S</span>
+              {' '}Xuất sắc ({'>='} 95đ). Thanh toán luôn đúng hạn, không nợ.
+            </p>
+            <p>
+              <span className="font-bold text-blue-400 bg-blue-500/10 px-1.5 py-0.2 rounded text-[10px]">A</span>
+              {' '}Tốt ({'>='} 85đ). Rất uy tín, hiếm khi chậm trễ.
+            </p>
+            <p>
+              <span className="font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded text-[10px]">B</span>
+              {' '}Trung bình ({'>='} 70đ). Đôi khi chậm trễ, vẫn giao dịch được.
+            </p>
+            <p>
+              <span className="font-bold text-orange-400 bg-orange-500/10 px-1.5 py-0.2 rounded text-[10px]">C</span>
+              {' '}Yếu ({'>='} 50đ). Thường chậm thanh toán, cần nhắc nhở.
+            </p>
+            <p>
+              <span className="font-bold text-red-400 bg-red-500/10 px-1.5 py-0.2 rounded text-[10px]">D</span>
+              {' '}Kém (dưới 50đ). Nợ dai dẳng, hạn chế cấp hàng trước.
+            </p>
           </div>
         </div>
       </div>
@@ -218,6 +235,7 @@ export default function CustomerDebtDetailPage() {
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-white/5 bg-white/2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  <th className="px-4 py-3 w-12 text-center">STT</th>
                   <th className="px-4 py-3 w-10">
                     <input type="checkbox"
                       checked={selectedOrderIds.size === unpaidOrders.length && unpaidOrders.length > 0}
@@ -228,8 +246,11 @@ export default function CustomerDebtDetailPage() {
                       className="w-4 h-4 accent-indigo-500 cursor-pointer" />
                   </th>
                   <th className="px-4 py-3">Mã đơn / Dịch vụ</th>
-                  <th className="px-4 py-3">Ngày giao tài khoản</th>
-                  <th className="px-4 py-3">Ngày bắt đầu nợ</th>
+                  <th className="px-4 py-3 text-center">Ngày tạo</th>
+                  <th className="px-4 py-3 text-center">Ngày cập nhật</th>
+                  <th className="px-4 py-3 text-center">Ngày báo lỗi</th>
+                  <th className="px-4 py-3 text-center">Ngày hoàn tiền</th>
+                  <th className="px-4 py-3 text-center">Ngày thanh toán</th>
                   <th className="px-4 py-3 text-center">Số ngày đã nợ</th>
                   <th className="px-4 py-3 text-right">Giá bán</th>
                   <th className="px-4 py-3 text-right">Giá vốn</th>
@@ -240,11 +261,12 @@ export default function CustomerDebtDetailPage() {
               </thead>
               <tbody className="divide-y divide-white/5 text-xs">
                 {unpaidOrders.length === 0 ? (
-                  <tr><td colSpan={10} className="px-4 py-8 text-center text-slate-500">🎉 Không còn nợ!</td></tr>
-                ) : unpaidOrders.map((order: any) => {
+                  <tr><td colSpan={14} className="px-4 py-8 text-center text-slate-500">🎉 Không còn nợ!</td></tr>
+                ) : unpaidOrders.map((order: any, idx: number) => {
                   const now = new Date();
                   const startDateObj = new Date(order.startDate);
                   const daysInDebt = order.daysInDebt !== undefined ? order.daysInDebt : Math.max(0, Math.floor((now.getTime() - startDateObj.getTime()) / (24 * 60 * 60 * 1000)));
+                  const latestRefund = order.refundHistories?.[0];
                   
                   let statusText = '';
                   let statusClass = '';
@@ -264,6 +286,7 @@ export default function CustomerDebtDetailPage() {
 
                   return (
                     <tr key={order.id} className="hover:bg-white/3 transition-colors">
+                      <td className="px-4 py-3 text-center text-slate-500 font-mono">{idx + 1}</td>
                       <td className="px-4 py-3">
                         <input type="checkbox" checked={selectedOrderIds.has(order.id)} onChange={() => toggleOrder(order.id)}
                           className="w-4 h-4 accent-indigo-500 cursor-pointer" />
@@ -275,12 +298,11 @@ export default function CustomerDebtDetailPage() {
                           <span className="text-slate-300 font-medium">{order.service?.name}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-300 font-medium">
-                        {formatDateShort(order.startDate)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-300 font-medium">
-                        {formatDateShort(order.startDate)}
-                      </td>
+                      <td className="px-4 py-3 text-slate-400 font-mono text-center">{order.createdAt ? new Date(order.createdAt).toLocaleDateString('vi-VN') : '—'}</td>
+                      <td className="px-4 py-3 text-slate-400 font-mono text-center">{order.updatedAt ? new Date(order.updatedAt).toLocaleDateString('vi-VN') : '—'}</td>
+                      <td className="px-4 py-3 text-rose-400 font-mono text-center">{latestRefund?.errorDate ? new Date(latestRefund.errorDate).toLocaleDateString('vi-VN') : '—'}</td>
+                      <td className="px-4 py-3 text-emerald-400 font-mono text-center">{latestRefund?.createdAt ? new Date(latestRefund.createdAt).toLocaleDateString('vi-VN') : '—'}</td>
+                      <td className="px-4 py-3 text-slate-400 font-mono text-center">{order.paidAt ? new Date(order.paidAt).toLocaleDateString('vi-VN') : '—'}</td>
                       <td className="px-4 py-3 text-center">
                         <span className={`inline-block text-[10px] ${statusClass}`}>
                           {statusText}

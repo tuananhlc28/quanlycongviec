@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useRef } from 'react';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -20,6 +21,8 @@ interface WarrantyDetailViewProps {
 
 export default function WarrantyDetailView({ order, activityLogs }: WarrantyDetailViewProps) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const isAdmin = session?.user?.role === 'ADMIN';
   const [loading, setLoading] = useState(false);
   const [statusNote, setStatusNote] = useState('');
   const cardRef = useRef<HTMLDivElement>(null);
@@ -192,29 +195,138 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
 
   // Timeline Step Generator
   const timelineSteps = useMemo(() => {
-    const steps = [
-      { label: 'Tạo đơn', date: order.createdAt, icon: '🎉', done: true },
-      { label: 'Thanh toán', date: order.paymentStatus === 'PAID' ? order.paidAt : null, icon: '💳', done: order.paymentStatus === 'PAID' },
-      { label: 'Đang sử dụng', date: order.startDate, icon: '🟢', done: true },
-      { label: 'Báo lỗi', date: latestRefund?.errorDate, icon: '🔵', done: ['WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND', 'WARRANTY_DONE', 'WARRANTY_REJECTED'].includes(order.status) },
-      { label: 'Chờ nguồn', date: null, icon: '🟣', done: ['WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND', 'WARRANTY_DONE', 'WARRANTY_REJECTED'].includes(order.status) },
-      { label: 'Nguồn hoàn', date: null, icon: '✅', done: ['WARRANTY_PENDING_REFUND', 'WARRANTY_DONE'].includes(order.status) },
-      { label: 'Hoàn khách', date: latestRefund?.createdAt, icon: '💸', done: order.status === 'WARRANTY_DONE' },
-      { label: 'Hoàn tất', date: null, icon: '🏁', done: order.status === 'WARRANTY_DONE' },
+    const statusOrder = ['ACTIVE', 'EXPIRING', 'EXPIRED', 'REPORTED', 'WAIT_SOURCE', 'WAIT_CUSTOMER_REFUND', 'COMPLETED', 'SOURCE_REJECTED'];
+    const currentIdx = statusOrder.indexOf(order.status);
+    
+    // Helper to check if step is done or active
+    const isDone = (targetStatus: string) => {
+      const targetIdx = statusOrder.indexOf(targetStatus);
+      if (order.status === 'SOURCE_REJECTED' && targetStatus === 'COMPLETED') return false;
+      if (order.status === 'COMPLETED' && targetStatus === 'SOURCE_REJECTED') return false;
+      return currentIdx >= targetIdx;
+    };
+
+    const isActive = (targetStatus: string) => {
+      return order.status === targetStatus;
+    };
+
+    return [
+      {
+        label: 'Đang sử dụng',
+        icon: '🟢',
+        done: isDone('ACTIVE'),
+        active: isActive('ACTIVE'),
+        date: order.startDate,
+      },
+      {
+        label: 'Sắp hết hạn',
+        icon: '🟡',
+        done: isDone('EXPIRING'),
+        active: isActive('EXPIRING'),
+        date: null,
+      },
+      {
+        label: 'Hết hạn',
+        icon: '🔴',
+        done: isDone('EXPIRED'),
+        active: isActive('EXPIRED'),
+        date: order.endDate,
+      },
+      {
+        label: 'Khách báo lỗi',
+        icon: '🚨',
+        done: isDone('REPORTED'),
+        active: isActive('REPORTED'),
+        date: order.refundHistories?.[0]?.errorDate || null,
+      },
+      {
+        label: 'Chờ nguồn',
+        icon: '⏳',
+        done: isDone('WAIT_SOURCE'),
+        active: isActive('WAIT_SOURCE'),
+        date: null,
+      },
+      {
+        label: 'Chờ hoàn khách',
+        icon: '🟣',
+        done: isDone('WAIT_CUSTOMER_REFUND'),
+        active: isActive('WAIT_CUSTOMER_REFUND'),
+        date: null,
+      },
+      {
+        label: order.status === 'SOURCE_REJECTED' ? 'Từ chối hoàn' : 'Hoàn tất',
+        icon: order.status === 'SOURCE_REJECTED' ? '⛔' : '✅',
+        done: order.status === 'COMPLETED' || order.status === 'SOURCE_REJECTED',
+        active: order.status === 'COMPLETED' || order.status === 'SOURCE_REJECTED',
+        date: (order.status === 'COMPLETED' || order.status === 'SOURCE_REJECTED') ? order.updatedAt : null,
+      },
     ];
-    if (order.status === 'WARRANTY_REJECTED') {
-      steps[5] = { label: 'Nguồn từ chối', date: null, icon: '⛔', done: true };
-      steps[6] = { label: 'Từ chối BH', date: null, icon: '❌', done: true };
-      steps[7] = { label: '—', date: null, icon: '—', done: false };
-    }
-    return steps;
-  }, [order, latestRefund]);
+  }, [order]);
 
   const statusLabel = ORDER_STATUS_LABELS[order.status] || order.status;
   const statusColor = ORDER_STATUS_COLORS[order.status] || '';
+  const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
 
   return (
     <div className="space-y-6 animate-fade-in text-white">
+      {/* Warning Banners */}
+      {isLocked && (
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-rose-300">
+          <div className="flex items-start gap-2.5">
+            <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide">Đơn hàng đang bị khóa</p>
+              <p className="text-[11px] text-rose-400/80 mt-0.5">
+                Đơn hàng đã ở trạng thái hoàn tất hoặc bị từ chối và đang bị khóa. Bạn không thể thay đổi tài chính, trạng thái hoặc thao tác nghiệp vụ trừ khi được Admin mở khóa.
+              </p>
+            </div>
+          </div>
+          {isAdmin && (
+            <button
+              onClick={async () => {
+                const reason = prompt('Nhập lý do mở khóa đơn hàng:');
+                if (reason) {
+                  setLoading(true);
+                  try {
+                    const res = await fetch(`/api/admin/orders/${order.id}/unlock`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ reason }),
+                    });
+                    if (res.ok) {
+                      toast.success('Mở khóa thành công!');
+                      router.refresh();
+                    } else {
+                      const err = await res.json();
+                      toast.error(err.error || 'Mở khóa thất bại');
+                    }
+                  } catch {
+                    toast.error('Lỗi kết nối máy chủ');
+                  } finally {
+                    setLoading(false);
+                  }
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all cursor-pointer"
+            >
+              🔓 Mở khóa đơn
+            </button>
+          )}
+        </div>
+      )}
+
+      {order.isUnlocked && ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && (
+        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-start gap-2.5 text-emerald-300">
+          <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide">Đơn hàng đã được mở khóa</p>
+            <p className="text-[11px] text-emerald-400/80 mt-0.5">
+              Lý do mở khóa: {order.unlockReason || 'Không có lý do'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -491,7 +603,8 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
                   type="number"
                   value={actualClientRefund}
                   onChange={e => setActualClientRefund(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg bg-[#1a1f2e] border border-white/10 text-rose-400 focus:border-rose-500 focus:outline-none font-mono font-bold"
+                  disabled={isLocked || !isAdmin}
+                  className="w-full px-3 py-2 text-xs rounded-lg bg-[#1a1f2e] border border-white/10 text-rose-400 focus:border-rose-500 focus:outline-none font-mono font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="0"
                 />
               </div>
@@ -502,7 +615,8 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
                   type="number"
                   value={actualSourceRefund}
                   onChange={e => setActualSourceRefund(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg bg-[#1a1f2e] border border-white/10 text-emerald-400 focus:border-emerald-500 focus:outline-none font-mono font-bold"
+                  disabled={isLocked || !isAdmin}
+                  className="w-full px-3 py-2 text-xs rounded-lg bg-[#1a1f2e] border border-white/10 text-emerald-400 focus:border-emerald-500 focus:outline-none font-mono font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="0"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">
@@ -517,8 +631,8 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
 
               <button
                 onClick={handleSaveFinancials}
-                disabled={loading}
-                className="w-full py-2 text-xs font-bold bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-lg cursor-pointer flex items-center justify-center gap-1.5 transition-all mt-1"
+                disabled={isLocked || loading || !isAdmin}
+                className="w-full py-2 text-xs font-bold bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-lg cursor-pointer flex items-center justify-center gap-1.5 transition-all mt-1 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                 💾 Lưu số tiền chỉnh sửa
@@ -546,17 +660,19 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
             <div className="space-y-3">
               <span className="text-[10px] font-bold text-slate-400 uppercase block tracking-wider">🔄 CHUYỂN TRẠNG THÁI TIẾP THEO</span>
               
-              <textarea
-                rows={2}
-                value={statusNote}
-                onChange={e => setStatusNote(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none resize-none"
-                placeholder="Nhập ghi chú lý do / phản hồi bảo hành..."
-              />
+              {!isLocked && (
+                <textarea
+                  rows={2}
+                  value={statusNote}
+                  onChange={e => setStatusNote(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none resize-none"
+                  placeholder="Nhập ghi chú lý do / phản hồi bảo hành..."
+                />
+              )}
 
-              {order.status === 'WARRANTY' && (
+              {order.status === 'REPORTED' && !isLocked && (
                 <button
-                  onClick={() => handleStatusChange('WARRANTY_PENDING_SOURCE')}
+                  onClick={() => handleStatusChange('WAIT_SOURCE')}
                   disabled={loading}
                   className="w-full py-2.5 text-xs font-bold bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-xl cursor-pointer flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-950/20"
                 >
@@ -565,10 +681,10 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
                 </button>
               )}
 
-              {order.status === 'WARRANTY_PENDING_SOURCE' && (
+              {order.status === 'WAIT_SOURCE' && !isLocked && (
                 <div className="space-y-2">
                   <button
-                    onClick={() => handleStatusChange('WARRANTY_PENDING_REFUND')}
+                    onClick={() => handleStatusChange('WAIT_CUSTOMER_REFUND')}
                     disabled={loading}
                     className="w-full py-2.5 text-xs font-bold bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-xl cursor-pointer flex items-center justify-center gap-2 transition-all shadow-lg shadow-orange-950/20"
                   >
@@ -576,7 +692,7 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
                     🟠 Nguồn đồng ý → Chờ hoàn khách
                   </button>
                   <button
-                    onClick={() => handleStatusChange('WARRANTY_REJECTED')}
+                    onClick={() => handleStatusChange('SOURCE_REJECTED')}
                     disabled={loading}
                     className="w-full py-2.5 text-xs font-bold bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl cursor-pointer flex items-center justify-center gap-2 transition-all"
                   >
@@ -586,21 +702,21 @@ export default function WarrantyDetailView({ order, activityLogs }: WarrantyDeta
                 </div>
               )}
 
-              {order.status === 'WARRANTY_PENDING_REFUND' && (
+              {order.status === 'WAIT_CUSTOMER_REFUND' && !isLocked && (
                 <button
-                  onClick={() => handleStatusChange('WARRANTY_DONE')}
-                  disabled={loading}
-                  className="w-full py-2.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl cursor-pointer flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-950/20"
+                  onClick={() => handleStatusChange('COMPLETED')}
+                  disabled={loading || !isAdmin}
+                  className="w-full py-2.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl cursor-pointer flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-950/20 disabled:cursor-not-allowed"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                   ✅ Đã hoàn tiền khách → Hoàn tất
                 </button>
               )}
 
-              {(order.status === 'WARRANTY_DONE' || order.status === 'WARRANTY_REJECTED') && (
+              {(order.status === 'COMPLETED' || order.status === 'SOURCE_REJECTED') && (
                 <div className="text-center text-xs text-slate-500 py-3 bg-white/3 border border-white/5 rounded-xl">
-                  <p className="text-lg mb-1">{order.status === 'WARRANTY_DONE' ? '🏁' : '⛔'}</p>
-                  <p className="font-bold">{order.status === 'WARRANTY_DONE' ? 'Đã hoàn tất bảo hành' : 'Bị từ chối bảo hành'}</p>
+                  <p className="text-lg mb-1">{order.status === 'COMPLETED' ? '🏁' : '⛔'}</p>
+                  <p className="font-bold">{order.status === 'COMPLETED' ? 'Đã hoàn tất bảo hành' : 'Bị từ chối bảo hành'}</p>
                   <p className="text-[10px] text-slate-600 mt-0.5">Không cần thực hiện thêm thao tác nào</p>
                 </div>
               )}

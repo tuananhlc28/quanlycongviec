@@ -81,7 +81,7 @@ export async function GET(request: Request) {
         existing.cost += o.costPrice;
         existing.profit += actualProfit;
         existing.ordersCount += 1;
-        if (o.status === 'REFUNDED') {
+        if (orderRefunds > 0) {
           existing.refundCount += 1;
         }
         sourceMap.set(sName, existing);

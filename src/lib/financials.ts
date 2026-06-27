@@ -312,11 +312,13 @@ export interface SourceDebtSummary {
   totalExpectedRefund: number;
   totalActualRefund: number;
   totalDebt: number;          // expectedRefund - actualRefund (còn nợ)
-  profitImpact: number;       // lỗ do nguồn chưa hoàn
+  totalRejectedRefund: number;  // tiền nguồn từ chối
+  profitImpact: number;       // thiệt hại (tiền hoàn khách khi bị nguồn từ chối)
 }
 
 export function computeSourceDebtSummaries(
   refundHistories: Array<{
+    amount: number;
     sourceStatus: string;
     sourceRefundExpected: number;
     sourceRefundActual: number;
@@ -344,6 +346,7 @@ export function computeSourceDebtSummaries(
         totalExpectedRefund: 0,
         totalActualRefund: 0,
         totalDebt: 0,
+        totalRejectedRefund: 0,
         profitImpact: 0,
       });
     }
@@ -354,20 +357,21 @@ export function computeSourceDebtSummaries(
     s.totalActualRefund += r.sourceRefundActual || 0;
 
     const status = r.sourceStatus;
-    if (status === 'PENDING') {
+    const isWaiting = ['PENDING', 'REQUESTED', 'APPROVED'].includes(status);
+    if (isWaiting) {
       s.pendingOrders++;
+      s.totalDebt += Math.max(0, (r.sourceRefundExpected || 0) - (r.sourceRefundActual || 0));
     } else if (status === 'REFUNDED') {
       s.refundedOrders++;
     } else if (status === 'REJECTED') {
       s.rejectedOrders++;
-      s.profitImpact += r.sourceRefundExpected || 0; // lost money
+      s.totalRejectedRefund += r.sourceRefundExpected || 0;
+      s.profitImpact += r.amount || 0; // lost money paid to client
     }
 
-    if (['PENDING', 'REFUNDED', 'REJECTED'].includes(status)) {
+    if (['PENDING', 'REQUESTED', 'APPROVED', 'REFUNDED', 'REJECTED'].includes(status)) {
       s.requestedOrders++;
     }
-
-    s.totalDebt = Math.max(0, s.totalExpectedRefund - s.totalActualRefund);
   }
 
   return Array.from(map.values()).sort((a, b) => b.totalDebt - a.totalDebt);
@@ -393,6 +397,7 @@ export function computeRefundDashboard(
   let totalSourceRefundExpected = 0;
   let totalSourceRefundActual = 0;
   let totalProfitAfterRefund = 0;
+  let totalSourceDebt = 0;
 
   for (const r of refundHistories) {
     totalClientRefundActual += r.amount || 0;
@@ -406,9 +411,13 @@ export function computeRefundDashboard(
       r.sourceRefundActual || 0
     );
     totalProfitAfterRefund += profit;
+
+    const isWaiting = ['PENDING', 'REQUESTED', 'APPROVED'].includes(r.sourceStatus);
+    if (isWaiting) {
+      totalSourceDebt += Math.max(0, (r.sourceRefundExpected || 0) - (r.sourceRefundActual || 0));
+    }
   }
 
-  const totalSourceDebt = Math.max(0, totalSourceRefundExpected - totalSourceRefundActual);
   const refundDiff = totalSourceRefundActual - totalSourceRefundExpected;
 
   return {

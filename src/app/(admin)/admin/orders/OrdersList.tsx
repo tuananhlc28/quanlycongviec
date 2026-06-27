@@ -2,12 +2,18 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
-import { Search, Plus, Download, X, Eye, EyeOff, Edit2, Calendar, DollarSign, Plug, Sparkles, Loader2, ArrowRight, ShoppingCart, ShieldAlert, RotateCcw, AlertTriangle, CheckCircle2, MessageCircle, ExternalLink, Trash2 } from 'lucide-react';
+import { Search, Plus, Download, X, Eye, EyeOff, Edit2, Calendar, DollarSign, Plug, Sparkles, Loader2, ArrowRight, ShoppingCart, ShieldAlert, RotateCcw, AlertTriangle, CheckCircle2, MessageCircle, ExternalLink, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { formatCurrency, formatDate, getStatusColor, getStatusLabel, getPaymentStatusColor, getPaymentStatusLabel } from '@/lib/utils';
 import AdvancedFilter from '@/components/shared/AdvancedFilter';
 import CountdownBadge from '@/components/shared/CountdownBadge';
+import StatusChangePopup, { StatusOption } from '@/components/shared/StatusChangePopup';
+import ColumnVisibilityToggle from '@/components/shared/ColumnVisibilityToggle';
+import { saveColumnVisibility, loadColumnVisibility, filterByTimeRange } from '@/lib/tableUtils';
+import { TimeRange, DateRange } from '@/components/shared/TimeFilterDropdown';
+import StickyBottomActionBar from '@/components/shared/StickyBottomActionBar';
 
 interface Customer {
   id: string;
@@ -99,7 +105,10 @@ interface OrderRow {
   status: string;
   note: string | null;
   createdAt: Date | string;
+  updatedAt: Date | string;
   refundHistories: RefundHistory[];
+  isUnlocked?: boolean;
+  unlockReason?: string | null;
 }
 
 interface OrdersListProps {
@@ -118,6 +127,8 @@ export default function OrdersList({
   currentUser,
 }: OrdersListProps) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const isAdmin = session?.user?.role === 'ADMIN';
   const [orders, setOrders] = useState<OrderRow[]>(initialOrders);
 
   const clickTimeoutRef = useRef<any>(null);
@@ -150,58 +161,48 @@ export default function OrdersList({
   const [selectedSource, setSelectedSource] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
   const [selectedPaymentStatus, setSelectedPaymentStatus] = useState('');
-  const [dateStart, setDateStart] = useState('');
-  const [dateEnd, setDateEnd] = useState('');
 
-  const handlePreset = (preset: string) => {
-    const now = new Date();
-    let start = new Date(now);
-    let end = new Date(now);
+  // Time Filter States
+  const [timeRange, setTimeRange] = useState<TimeRange>('all');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [dateRange, setDateRange] = useState<DateRange | null>(null);
 
-    const formatDateString = (d: Date) => {
-      return d.toISOString().split('T')[0];
-    };
+  // Status Change Popup States
+  const [statusPopupOpen, setStatusPopupOpen] = useState(false);
+  const [statusPopupOrder, setStatusPopupOrder] = useState<OrderRow | null>(null);
 
-    switch (preset) {
-      case 'today':
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '3days':
-        start.setDate(start.getDate() - 2);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '7days':
-        start.setDate(start.getDate() - 6);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '30days':
-        start.setDate(start.getDate() - 29);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '3months':
-        start.setMonth(start.getMonth() - 3);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '6months':
-        start.setMonth(start.getMonth() - 6);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case '1year':
-        start.setFullYear(start.getFullYear() - 1);
-        setDateStart(formatDateString(start));
-        setDateEnd(formatDateString(end));
-        break;
-      case 'all':
-        setDateStart('');
-        setDateEnd('');
-        break;
-    }
+  // Column Visibility States
+  const COLUMNS_CONFIG = [
+    { id: 'orderCode', label: 'Mã đơn' },
+    { id: 'customer', label: 'Khách hàng' },
+    { id: 'service', label: 'Dịch vụ & Gói' },
+    { id: 'account', label: 'Tài khoản' },
+    { id: 'salePrice', label: 'Giá bán' },
+    { id: 'costPrice', label: 'Giá vốn' },
+    { id: 'profit', label: 'Lợi nhuận' },
+    { id: 'createdAt', label: 'Ngày tạo' },
+    { id: 'startDate', label: 'Ngày mua / Kích hoạt' },
+    { id: 'paidAt', label: 'Ngày thanh toán' },
+    { id: 'endDate', label: 'Ngày hết hạn' },
+    { id: 'remaining', label: 'Thời hạn còn lại' },
+    { id: 'status', label: 'Trạng thái' },
+    { id: 'payment', label: 'Thanh toán' }
+  ];
+  const DEFAULT_COLUMNS = ['orderCode', 'customer', 'service', 'account', 'salePrice', 'profit', 'endDate', 'remaining', 'status', 'payment'];
+  const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
+
+  useEffect(() => {
+    const saved = loadColumnVisibility('admin_orders_columns');
+    setVisibleColumns(saved.length > 0 ? saved : DEFAULT_COLUMNS);
+  }, []);
+
+  const handleToggleColumn = (colId: string) => {
+    const next = visibleColumns.includes(colId)
+      ? visibleColumns.filter(id => id !== colId)
+      : [...visibleColumns, colId];
+    setVisibleColumns(next);
+    saveColumnVisibility('admin_orders_columns', next);
   };
 
   // Password visibility maps
@@ -319,6 +320,30 @@ export default function OrdersList({
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [openPaymentMenuId, setOpenPaymentMenuId] = useState<string | null>(null);
+
+  // Sort states
+  const [sortCol, setSortCol] = useState<string>('');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>(null);
+
+  const handleSort = (col: string) => {
+    if (sortCol !== col) {
+      setSortCol(col);
+      setSortDir('asc');
+    } else if (sortDir === 'asc') {
+      setSortDir('desc');
+    } else {
+      setSortCol('');
+      setSortDir(null);
+    }
+    setCurrentPage(1);
+  };
+
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortCol !== col) return <span className="ml-1 text-slate-500 hover:text-slate-300">⇅</span>;
+    if (sortDir === 'asc') return <span className="ml-1 text-indigo-400">▲</span>;
+    return <span className="ml-1 text-indigo-400">▼</span>;
+  };
 
   // Batch actions modals state
   const [batchSourceModalOpen, setBatchSourceModalOpen] = useState(false);
@@ -419,6 +444,31 @@ export default function OrdersList({
       toast.error('Vui lòng chọn ít nhất một đơn hàng');
       return;
     }
+
+    let confirmMsg = '';
+    const numOrders = selectedOrderIds.length;
+    if (action === 'DELETE') {
+      confirmMsg = `Bạn có chắc chắn muốn XÓA HÀNG LOẠT ${numOrders} đơn hàng này không? Hành động này không thể hoàn tác!`;
+    } else if (action === 'RENEW') {
+      confirmMsg = `Xác nhận GIA HẠN hàng loạt cho ${numOrders} đơn hàng?`;
+    } else if (action === 'UPDATE_STATUS') {
+      confirmMsg = `Xác nhận THAY ĐỔI TRẠNG THÁI hàng loạt cho ${numOrders} đơn hàng?`;
+    } else if (action === 'report_error') {
+      confirmMsg = `Xác nhận BÁO LỖI hàng loạt cho ${numOrders} đơn hàng?`;
+    } else if (action === 'CHANGE_SOURCE') {
+      confirmMsg = `Xác nhận THAY ĐỔI NGUỒN hàng loạt cho ${numOrders} đơn hàng?`;
+    } else if (action === 'UPDATE_PAYMENT') {
+      confirmMsg = `Xác nhận CẬP NHẬT THANH TOÁN hàng loạt cho ${numOrders} đơn hàng?`;
+    } else if (action === 'REFUND') {
+      confirmMsg = `Xác nhận HOÀN TIỀN hàng loạt cho ${numOrders} đơn hàng?`;
+    } else {
+      confirmMsg = `Xác nhận thực hiện thao tác hàng loạt cho ${numOrders} đơn hàng đã chọn?`;
+    }
+
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+
     setBatchLoading(true);
     try {
       const url = action === 'report_error' ? '/api/admin/orders/batch-warranty' : '/api/admin/orders/batch';
@@ -671,7 +721,25 @@ export default function OrdersList({
 
   // Filter local rows
   const filteredOrders = useMemo(() => {
-    return orders.filter((o) => {
+    let filtered = orders;
+    if (timeRange !== 'all') {
+      let start: Date | null = null;
+      let end: Date | null = null;
+      if (timeRange === 'custom') {
+        if (customStart) start = new Date(customStart);
+        if (customEnd) {
+          end = new Date(customEnd);
+          end.setHours(23, 59, 59, 999);
+        }
+      } else if (dateRange) {
+        start = new Date(dateRange.start);
+        end = new Date(dateRange.end);
+        end.setHours(23, 59, 59, 999);
+      }
+      filtered = filterByTimeRange(filtered, start, end);
+    }
+
+    return filtered.filter((o) => {
       if (search) {
         const term = search.toLowerCase();
         const matchesSearch =
@@ -690,17 +758,63 @@ export default function OrdersList({
       if (selectedSource && o.supplierSourceId !== selectedSource) return false;
       if (selectedStatus && o.status !== selectedStatus) return false;
       if (selectedPaymentStatus && o.paymentStatus !== selectedPaymentStatus) return false;
-      if (dateStart && new Date(o.startDate) < new Date(dateStart)) return false;
-      if (dateEnd && new Date(o.startDate) > new Date(dateEnd)) return false;
       return true;
     });
-  }, [orders, search, selectedService, selectedSource, selectedStatus, selectedPaymentStatus, dateStart, dateEnd]);
+  }, [orders, search, selectedService, selectedSource, selectedStatus, selectedPaymentStatus, timeRange, customStart, customEnd, dateRange]);
 
-  const totalPages = Math.ceil(filteredOrders.length / pageSize);
+  // Sort filtered orders
+  const sortedOrders = useMemo(() => {
+    if (!sortCol || !sortDir) return filteredOrders;
+    const sorted = [...filteredOrders];
+    sorted.sort((a, b) => {
+      let valA: any, valB: any;
+      switch (sortCol) {
+        case 'createdAt':
+          valA = new Date(a.createdAt).getTime();
+          valB = new Date(b.createdAt).getTime();
+          break;
+        case 'startDate':
+          valA = new Date(a.startDate).getTime();
+          valB = new Date(b.startDate).getTime();
+          break;
+        case 'endDate':
+          valA = new Date(a.endDate).getTime();
+          valB = new Date(b.endDate).getTime();
+          break;
+        case 'salePrice':
+          valA = a.salePrice;
+          valB = b.salePrice;
+          break;
+        case 'costPrice':
+          valA = a.costPrice;
+          valB = b.costPrice;
+          break;
+        case 'profit':
+          valA = a.profit;
+          valB = b.profit;
+          break;
+        case 'status':
+          valA = a.status.toLowerCase();
+          valB = b.status.toLowerCase();
+          break;
+        case 'remaining':
+          valA = new Date(a.endDate).getTime() - Date.now();
+          valB = new Date(b.endDate).getTime() - Date.now();
+          break;
+        default:
+          return 0;
+      }
+      if (typeof valA === 'string') return sortDir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      return sortDir === 'asc' ? valA - valB : valB - valA;
+    });
+    return sorted;
+  }, [filteredOrders, sortCol, sortDir]);
+
+  const totalPages = Math.ceil(sortedOrders.length / pageSize);
   const paginatedOrders = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return filteredOrders.slice(start, start + pageSize);
-  }, [filteredOrders, currentPage, pageSize]);
+    return sortedOrders.slice(start, start + pageSize);
+  }, [sortedOrders, currentPage, pageSize]);
 
 
   // Handle Export CSV
@@ -710,8 +824,8 @@ export default function OrdersList({
       serviceId: selectedService,
       supplierSourceId: selectedSource,
       status: selectedStatus,
-      dateStart,
-      dateEnd,
+      dateStart: customStart || (dateRange?.start ? new Date(dateRange.start).toISOString().split('T')[0] : ''),
+      dateEnd: customEnd || (dateRange?.end ? new Date(dateRange.end).toISOString().split('T')[0] : ''),
     }).toString();
     window.open(`/api/admin/orders/export?${query}`, '_blank');
   };
@@ -882,6 +996,38 @@ export default function OrdersList({
     }
   };
 
+  const handleStatusChangeSubmit = async (data: {
+    status: string;
+    note: string;
+    notifyCustomer: boolean;
+    saveHistory: boolean;
+  }) => {
+    if (!statusPopupOrder) return;
+    const loadingToast = toast.loading('Đang cập nhật trạng thái đơn hàng...');
+    try {
+      const res = await fetch(`/api/admin/orders/${statusPopupOrder.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: data.status,
+          note: data.note ? `${statusPopupOrder.note || ''}\n[Cập nhật trạng thái]: ${data.note}`.trim() : undefined,
+          notifyCustomer: data.notifyCustomer,
+          saveHistory: data.saveHistory,
+        }),
+      });
+
+      if (res.ok) {
+        toast.success('Cập nhật trạng thái thành công!', { id: loadingToast });
+        router.refresh();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || 'Cập nhật thất bại', { id: loadingToast });
+      }
+    } catch {
+      toast.error('Lỗi kết nối máy chủ', { id: loadingToast });
+    }
+  };
+
   // Submit warranty form
   const handleWarrantySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -991,6 +1137,12 @@ export default function OrdersList({
         </div>
 
         <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+          <ColumnVisibilityToggle
+            columns={COLUMNS_CONFIG}
+            visibleColumns={visibleColumns}
+            onToggle={handleToggleColumn}
+            storageKey="admin_orders_columns"
+          />
           <button
             onClick={openCreateModal}
             className="flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all cursor-pointer"
@@ -1038,18 +1190,24 @@ export default function OrdersList({
         ]}
         selectedPaymentStatus={selectedPaymentStatus}
         setSelectedPaymentStatus={setSelectedPaymentStatus}
-        dateStart={dateStart}
-        setDateStart={setDateStart}
-        dateEnd={dateEnd}
-        setDateEnd={setDateEnd}
+        timeRange={timeRange}
+        setTimeRange={setTimeRange}
+        dateRange={dateRange}
+        setDateRange={setDateRange}
+        customStart={customStart}
+        setCustomStart={setCustomStart}
+        customEnd={customEnd}
+        setCustomEnd={setCustomEnd}
         onReset={() => {
           setSearch('');
           setSelectedService('');
           setSelectedSource('');
           setSelectedStatus('');
           setSelectedPaymentStatus('');
-          setDateStart('');
-          setDateEnd('');
+          setTimeRange('all');
+          setDateRange(null);
+          setCustomStart('');
+          setCustomEnd('');
         }}
       />
 
@@ -1066,19 +1224,20 @@ export default function OrdersList({
                   className="w-4 h-4 rounded border-white/10 bg-[#131722] text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                 />
               </th>
-              <th className="px-6 py-4">Mã đơn</th>
-              <th className="px-6 py-4">Khách hàng</th>
+              <th className="px-4 py-4 text-center w-12">STT</th>
+              <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('createdAt')}>Mã đơn <SortIcon col="createdAt" /></th>
+              <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('customer')}>Khách hàng <SortIcon col="customer" /></th>
               <th className="px-6 py-4">Dịch vụ & Gói</th>
               <th className="px-6 py-4">Tài khoản</th>
-              <th className="px-6 py-4">Tài chính (Bán / Vốn / Lãi)</th>
-              <th className="px-6 py-4">Thời hạn</th>
+              <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('salePrice')}>Tài chính <SortIcon col="salePrice" /></th>
+              <th className="px-6 py-4 cursor-pointer select-none hover:text-white transition-colors" onClick={() => handleSort('endDate')}>Thời hạn <SortIcon col="endDate" /></th>
               <th className="px-6 py-4">Trạng thái</th>
               <th className="px-6 py-4">Thanh toán</th>
               <th className="px-6 py-4 text-center">Thao tác</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5 text-sm text-slate-300">
-            {paginatedOrders.map((o) => {
+            {paginatedOrders.map((o, idx) => {
               const diff = new Date(o.endDate).getTime() - new Date().getTime();
               const remaining = Math.ceil(diff / (24 * 60 * 60 * 1000));
               const remainingLabel = remaining <= 0 ? 'Hết hạn' : `Còn ${remaining} ngày`;
@@ -1092,6 +1251,10 @@ export default function OrdersList({
                       onChange={() => handleToggleRow(o.id)}
                       className="w-4 h-4 rounded border-white/10 bg-[#131722] text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                     />
+                  </td>
+                  {/* STT */}
+                  <td className="px-4 py-4 text-center font-mono text-slate-500">
+                    {(currentPage - 1) * pageSize + idx + 1}
                   </td>
                   {/* Mã đơn */}
                   <td className="px-6 py-4">
@@ -1160,56 +1323,113 @@ export default function OrdersList({
 
                   {/* Tài chính */}
                   <td className="px-6 py-4 text-xs font-mono">
-                    <div className="space-y-1">
+                    <div className="space-y-0.5 text-left">
                       <p className="text-emerald-400 font-bold">Bán: {formatCurrency(o.salePrice)}</p>
-                      <p className="text-slate-400">Vốn: {formatCurrency(o.costPrice)}</p>
-                      <p className="text-indigo-300 font-bold border-t border-white/5 pt-0.5">Lãi: {formatCurrency(o.profit)}</p>
+                      <p className="text-slate-400">Vốn/Gốc: {formatCurrency(o.costPrice)}</p>
+                      <p className="text-indigo-300 font-bold">Lợi nhuận: {formatCurrency(o.profit)}</p>
+                      <p className="text-blue-400">Đã TT: {formatCurrency(o.paidAmount)}</p>
+                      {o.salePrice - o.paidAmount > 0 ? (
+                        <p className="text-rose-400 font-semibold">Nợ: {formatCurrency(o.salePrice - o.paidAmount)}</p>
+                      ) : (
+                        <p className="text-slate-500">Nợ: 0đ</p>
+                      )}
+                      {(() => {
+                        const totalRefund = o.refundHistories?.reduce((sum: number, r: any) => sum + r.amount, 0) || 0;
+                        return totalRefund > 0 ? (
+                          <p className="text-rose-500 font-bold border-t border-white/5 pt-0.5 mt-0.5">Hoàn: {formatCurrency(totalRefund)}</p>
+                        ) : null;
+                      })()}
                     </div>
                   </td>
 
                   {/* Thời hạn */}
                   <td className="px-6 py-4 text-xs">
                     <div className="space-y-1 flex flex-col items-start">
-                      <CountdownBadge endDate={o.endDate} status={o.status} />
-                      <p className="text-[10px] text-slate-500">Hạn: {formatDate(o.endDate)}</p>
+                      {(() => {
+                        const latestRefund = o.refundHistories && o.refundHistories.length > 0
+                          ? [...o.refundHistories].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+                          : null;
+                        const errorDateVal = latestRefund ? (latestRefund.errorDate || latestRefund.createdAt) : o.updatedAt;
+                        return (
+                          <CountdownBadge endDate={o.endDate} status={o.status} completedAt={errorDateVal} />
+                        );
+                      })()}
                     </div>
                   </td>
 
                   {/* Trạng thái */}
                   <td className="px-6 py-4">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${getStatusColor(o.status)}`}>
-                      {getStatusLabel(o.status)}
-                    </span>
+                    {(() => {
+                      const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(o.status) && !o.isUnlocked;
+                      return (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${isLocked ? 'bg-white/5 text-slate-300 border-white/10' : getStatusColor(o.status)}`}>
+                          {isLocked ? '⚪ Đã khóa' : getStatusLabel(o.status)}
+                        </span>
+                      );
+                    })()}
                   </td>
 
                   {/* Thanh toán */}
                   <td className="px-6 py-4">
-                    <div className="flex flex-col gap-1.5 min-w-[130px]">
-                      <select
-                        value={o.paymentStatus}
-                        onChange={async (e) => {
-                          const newStatus = e.target.value;
-                          await handleUpdatePaymentStatus(o.id, newStatus);
-                        }}
-                        className={`px-2 py-1 text-[10px] font-bold rounded-lg border bg-[#0f1320] focus:outline-none cursor-pointer ${
+                    <div className="relative flex flex-col gap-1.5 min-w-[130px]">
+                      <button
+                        onClick={() => setOpenPaymentMenuId(openPaymentMenuId === o.id ? null : o.id)}
+                        className={`status-badge border text-[11px] cursor-pointer flex items-center justify-between gap-1 w-full text-left ${
                           o.paymentStatus === 'PAID'
-                            ? 'text-emerald-400 border-emerald-500/30'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                             : o.paymentStatus === 'OVERDUE'
-                            ? 'text-rose-400 border-rose-500/30'
-                            : 'text-amber-400 border-amber-500/30'
+                            ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                            : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                         }`}
                       >
-                        <option value="UNPAID" className="text-amber-400">🟡 Chưa thanh toán</option>
-                        <option value="PAID" className="text-emerald-400">🟢 Đã thanh toán</option>
-                        <option value="OVERDUE" className="text-rose-400">🔴 Quá hạn</option>
-                      </select>
+                        <span>
+                          {o.paymentStatus === 'PAID' ? '🟢 Đã thanh toán' : o.paymentStatus === 'OVERDUE' ? '🔴 Quá hạn' : '🟡 Chưa thanh toán'}
+                        </span>
+                        <span className="text-[8px] opacity-60">▼</span>
+                      </button>
+
+                      {openPaymentMenuId === o.id && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setOpenPaymentMenuId(null)} />
+                          <div className="absolute top-8 left-0 right-0 bg-[#161b26] border border-white/10 rounded-lg shadow-xl py-1 z-20 font-sans">
+                            <button
+                              onClick={async () => {
+                                setOpenPaymentMenuId(null);
+                                await handleUpdatePaymentStatus(o.id, 'UNPAID');
+                              }}
+                              className="w-full text-left px-3 py-1.5 text-xs text-amber-400 hover:bg-white/5 font-semibold flex items-center gap-1.5"
+                            >
+                              🟡 Chưa thanh toán
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setOpenPaymentMenuId(null);
+                                await handleUpdatePaymentStatus(o.id, 'PAID');
+                              }}
+                              className="w-full text-left px-3 py-1.5 text-xs text-emerald-400 hover:bg-white/5 font-semibold flex items-center gap-1.5"
+                            >
+                              🟢 Đã thanh toán
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setOpenPaymentMenuId(null);
+                                await handleUpdatePaymentStatus(o.id, 'OVERDUE');
+                              }}
+                              className="w-full text-left px-3 py-1.5 text-xs text-rose-400 hover:bg-white/5 font-semibold flex items-center gap-1.5"
+                            >
+                              🔴 Quá hạn
+                            </button>
+                          </div>
+                        </>
+                      )}
+                      
                       {o.paymentStatus !== 'PAID' && (() => {
                         const now = new Date();
                         const startDate = new Date(o.startDate);
                         const diffTime = Math.max(0, now.getTime() - startDate.getTime());
                         const daysInDebt = Math.floor(diffTime / (24 * 60 * 60 * 1000));
                         return (
-                          <span className="text-[9px] text-rose-400 font-semibold bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 self-start">
+                          <span className="text-[10px] text-rose-400 font-semibold bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20 self-start">
                             Đã nợ: {daysInDebt} ngày
                           </span>
                         );
@@ -1222,7 +1442,7 @@ export default function OrdersList({
                     <div className="flex items-center justify-center gap-1.5 flex-wrap max-w-[280px] mx-auto">
                       <Link
                         href={`/admin/orders/${o.id}`}
-                        className="px-2 py-0.5 rounded text-[10px] font-medium bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 transition-all focus:outline-none"
+                        className="btn-compact font-semibold border-slate-700/50"
                         title="Xem chi tiết"
                       >
                         👁 Xem
@@ -1230,7 +1450,7 @@ export default function OrdersList({
 
                       <button
                         onClick={() => openEditModal(o)}
-                        className="px-2 py-0.5 rounded text-[10px] font-medium bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 transition-all focus:outline-none cursor-pointer"
+                        className="btn-compact btn-compact-primary font-semibold"
                         title="Chỉnh sửa đơn"
                       >
                         ✏ Sửa
@@ -1240,7 +1460,7 @@ export default function OrdersList({
                         <>
                           <button
                             onClick={() => openRenewModal(o)}
-                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-all focus:outline-none cursor-pointer"
+                            className="btn-compact btn-compact-success font-semibold"
                             title="Gia hạn thuê bao"
                           >
                             🔄 Gia hạn
@@ -1248,7 +1468,7 @@ export default function OrdersList({
 
                           <button
                             onClick={() => openWarrantyModal(o)}
-                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 transition-all focus:outline-none cursor-pointer"
+                            className="btn-compact btn-compact-danger font-semibold"
                             title="Báo lỗi/Bảo hành"
                           >
                             🛠 Báo lỗi
@@ -1259,7 +1479,7 @@ export default function OrdersList({
                       <button
                         onClick={() => handleDeleteOrder(o.id)}
                         disabled={deleteLoadingId === o.id}
-                        className="px-2 py-0.5 rounded text-[10px] font-medium bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all focus:outline-none cursor-pointer flex items-center justify-center"
+                        className="btn-compact btn-compact-danger font-semibold flex items-center justify-center"
                         title="Xóa vĩnh viễn"
                       >
                         {deleteLoadingId === o.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : '🗑 Xóa'}
@@ -1271,7 +1491,7 @@ export default function OrdersList({
             })}
             {filteredOrders.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-6 py-12 text-center text-slate-500 text-sm">
+                <td colSpan={11} className="px-6 py-12 text-center text-slate-500 text-sm">
                   Không tìm thấy đơn hàng nào
                 </td>
               </tr>
@@ -1322,94 +1542,56 @@ export default function OrdersList({
         )}
       </div>
 
-      {/* Floating Bulk Action Bar */}
-      {selectedOrderIds.length > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center gap-3 px-6 py-3.5 rounded-2xl bg-[#131722] border border-indigo-500/30 shadow-2xl animate-slide-up text-white text-xs max-w-[95%]">
-          <div className="flex items-center gap-2 border-r border-white/10 pr-4">
-            <span className="font-bold text-indigo-400">Đã chọn: {selectedOrderIds.length} đơn</span>
-            {selectedOrderIds.length < filteredOrders.length && (
-              <button 
-                onClick={() => setSelectedOrderIds(filteredOrders.map(o => o.id))} 
-                className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-[10px] font-bold text-white transition-all cursor-pointer ml-1"
-              >
-                Chọn tất cả {filteredOrders.length} đơn
-              </button>
-            )}
-            <button 
-              onClick={() => setSelectedOrderIds([])} 
-              className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer ml-1.5"
-            >
-              Bỏ chọn
-            </button>
-          </div>
-          
-          <div className="flex items-center gap-1 border-r border-white/10 pr-4">
-            <span className="text-slate-500 text-[10px] uppercase font-bold mr-1">Chọn nhanh:</span>
-            {[10, 50, 100, 300].map(count => (
-              <button
-                key={count}
-                onClick={() => handleQuickSelect(count)}
-                className="px-2 py-0.5 rounded bg-white/5 border border-white/10 hover:bg-white/10 text-[10px] font-semibold text-slate-300 transition-all cursor-pointer"
-              >
-                {count}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-
-            <button
-              onClick={() => {
-                const note = prompt('Nhập lý do báo lỗi hàng loạt (tùy chọn):');
-                if (note !== null) {
-                  handleBatchAction('report_error', { note });
-                }
-              }}
-              disabled={batchLoading}
-              className="px-2.5 py-1.5 rounded-lg font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-all cursor-pointer"
-            >
-              🚨 Báo sự cố hàng loạt
-            </button>
-            <button
-              onClick={() => setBatchRefundModalOpen(true)}
-              disabled={batchLoading}
-              className="px-2.5 py-1.5 rounded-lg font-semibold bg-rose-600/20 hover:bg-rose-600/35 text-rose-300 border border-rose-500/30 transition-all cursor-pointer"
-            >
-              💸 Hoàn tiền hàng loạt
-            </button>
-            <button
-              onClick={() => setBatchSourceModalOpen(true)}
-              className="px-2.5 py-1.5 rounded-lg font-semibold bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 transition-all cursor-pointer"
-            >
-              📦 Đổi nguồn
-            </button>
-            <button
-              onClick={() => setBatchRenewModalOpen(true)}
-              className="px-2.5 py-1.5 rounded-lg font-semibold bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 transition-all cursor-pointer"
-            >
-              🔄 Gia hạn
-            </button>
-            <button
-              onClick={() => setBatchPaymentModalOpen(true)}
-              className="px-2.5 py-1.5 rounded-lg font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-all cursor-pointer"
-            >
-              💵 Thanh toán
-            </button>
-            <button
-              onClick={() => setBatchConfirmRefundModalOpen(true)}
-              className="px-2.5 py-1.5 rounded-lg font-semibold bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/20 transition-all cursor-pointer"
-            >
-              🤝 Cập nhật trạng thái hoàn tiền
-            </button>
-            <button
-              onClick={handleExportSelectedCSV}
-              className="px-2.5 py-1.5 rounded-lg font-semibold bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 transition-all cursor-pointer"
-            >
-              📥 Xuất Excel
-            </button>
-          </div>
-        </div>
-      )}
+      <StickyBottomActionBar
+        selectedCount={selectedOrderIds.length}
+        onClearSelection={() => setSelectedOrderIds([])}
+        actions={[
+          {
+            label: 'Báo sự cố hàng loạt',
+            onClick: () => {
+              const note = prompt('Nhập lý do báo lỗi hàng loạt (tùy chọn):');
+              if (note !== null) {
+                handleBatchAction('report_error', { note });
+              }
+            },
+            variant: 'danger' as const,
+            disabled: batchLoading,
+          },
+          ...(isAdmin ? [
+            {
+              label: 'Hoàn tiền hàng loạt',
+              onClick: () => setBatchRefundModalOpen(true),
+              variant: 'danger' as const,
+              disabled: batchLoading,
+            }
+          ] : []),
+          {
+            label: 'Đổi nguồn',
+            onClick: () => setBatchSourceModalOpen(true),
+            variant: 'primary' as const,
+          },
+          {
+            label: 'Gia hạn',
+            onClick: () => setBatchRenewModalOpen(true),
+            variant: 'success' as const,
+          },
+          {
+            label: 'Thanh toán',
+            onClick: () => setBatchPaymentModalOpen(true),
+            variant: 'warning' as const,
+          },
+          {
+            label: 'Cập nhật hoàn nguồn',
+            onClick: () => setBatchConfirmRefundModalOpen(true),
+            variant: 'purple' as const,
+          },
+          {
+            label: 'Xuất Excel',
+            onClick: handleExportSelectedCSV,
+            variant: 'secondary' as const,
+          }
+        ]}
+      />
 
       {/* --- MODAL: BATCH REFUND WITH PREVIEW --- */}
       {batchRefundModalOpen && (
@@ -2276,11 +2458,11 @@ export default function OrdersList({
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase">Giá bán (₫)</label>
-                    <input type="number" value={editSalePrice} onChange={(e) => setEditSalePrice(e.target.value)} className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white text-sm focus:outline-none" />
+                    <input type="number" value={editSalePrice} onChange={(e) => setEditSalePrice(e.target.value)} disabled={!isAdmin} className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white text-sm focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed" />
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase">Giá vốn (₫)</label>
-                    <input type="number" value={editCostPrice} onChange={(e) => setEditCostPrice(e.target.value)} className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white text-sm focus:outline-none" />
+                    <input type="number" value={editCostPrice} onChange={(e) => setEditCostPrice(e.target.value)} disabled={!isAdmin} className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white text-sm focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed" />
                   </div>
                 </div>
                 <div className="p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/15 flex justify-between items-center text-xs">
@@ -2308,7 +2490,7 @@ export default function OrdersList({
                       <option value="EXPIRED">🔴 Đã hết hạn</option>
                       <option value="WARRANTY">🔵 Chờ nguồn xử lý</option>
                       <option value="PENDING_REFUND">🟠 Chờ hoàn tiền</option>
-                      <option value="REFUNDED">⚫ Đã hoàn tiền</option>
+                      {isAdmin && <option value="REFUNDED">⚫ Đã hoàn tiền</option>}
                       <option value="WARRANTY_REJECTED">❌ Từ chối bảo hành</option>
                     </select>
                   </div>
@@ -2656,6 +2838,32 @@ export default function OrdersList({
             </form>
           </div>
         </div>
+      )}
+
+      {statusPopupOpen && statusPopupOrder && (
+        <StatusChangePopup
+          isOpen={statusPopupOpen}
+          onClose={() => {
+            setStatusPopupOpen(false);
+            setStatusPopupOrder(null);
+          }}
+          title={`Đổi trạng thái đơn ${statusPopupOrder.orderCode}`}
+          currentStatus={statusPopupOrder.status}
+          allowedStatuses={[
+            { value: 'ACTIVE', label: '🟢 Đang sử dụng' },
+            { value: 'EXPIRING_SOON', label: '🟡 Sắp hết hạn' },
+            { value: 'EXPIRED', label: '🔴 Đã hết hạn' },
+            { value: 'WARRANTY', label: '🔵 Đang bảo hành' },
+            { value: 'WARRANTY_PENDING_SOURCE', label: '🟣 Chờ hoàn nguồn' },
+            { value: 'WARRANTY_PENDING_REFUND', label: '🟠 Chờ hoàn tiền khách' },
+            ...(isAdmin ? [
+              { value: 'WARRANTY_DONE', label: '✅ Đã hoàn tất bảo hành' },
+              { value: 'REFUNDED', label: '⚫ Đã hoàn tiền' },
+            ] : []),
+            { value: 'WARRANTY_REJECTED', label: '⛔ Từ chối bảo hành' },
+          ]}
+          onSubmit={handleStatusChangeSubmit}
+        />
       )}
     </div>
   );

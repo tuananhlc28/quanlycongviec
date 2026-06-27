@@ -18,7 +18,7 @@ import {
   DollarSign, TrendingUp, Warehouse, Info, Shield, HelpCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { formatCurrency, formatDate, formatDateShort, getStatusColor, getStatusLabel, getPaymentStatusColor, getPaymentStatusLabel, getCustomerTagConfig, getCreditRatingConfig } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateShort, getStatusColor, getStatusLabel, getPaymentStatusColor, getPaymentStatusLabel, getCustomerTagConfig, getCreditRatingConfig, calculateDetailedCreditRating, getCustomerWarnings } from '@/lib/utils';
 import CountdownBadge from '@/components/shared/CountdownBadge';
 
 const FacebookIcon = (props: React.SVGProps<SVGSVGElement>) => (
@@ -197,22 +197,27 @@ export default function CustomerDetailView({
     const renewalsCount = activityLogs.filter((log: any) => ['RENEW_ORDER', 'BATCH_RENEW', 'RENEW'].includes(log.action)).length;
 
     // 3. Formula for credit rating score (0 - 100)
-    let score = 75; // Start with standard base of 75
+    let score = 0;
     if (customer.orders.length > 0) {
-      const daysSinceCreated = Math.max(0, Math.floor((new Date().getTime() - new Date(customer.createdAt).getTime()) / (24 * 60 * 60 * 1000)));
-      const onTimeRate = paidOnTimeCount / customer.orders.length;
-      const refundRate = totalSpent > 0 ? (totalRefund / totalSpent) : 0;
-
-      score += Math.min(15, totalSpent / 200000);
-      score += onTimeRate * 15;
-      score -= overdueCount * 5;
-      score -= latePaymentCount * 2;
-      score += Math.min(10, renewalsCount * 2.5);
-      score -= Math.min(15, warrantyCount * 3);
-      score -= Math.min(15, refundRate * 100);
-      score += Math.min(10, daysSinceCreated / 30);
-      score = Math.max(0, Math.min(100, Math.round(score)));
+      const breakdown = calculateDetailedCreditRating({
+        totalOrders: customer.orders.length,
+        paidOnTimeCount,
+        latePaymentCount,
+        currentDebtCount: overdueCount,
+        totalSpend: totalSpent,
+        warrantyCount,
+        totalRefund,
+      });
+      score = breakdown.score;
     }
+
+    const warnings = getCustomerWarnings({
+      totalOrders: customer.orders.length,
+      warrantyCount,
+      totalSpend: totalSpent,
+      totalRefund,
+      note: customer.note,
+    });
 
     return {
       totalOrders: customer.orders.length,
@@ -231,8 +236,9 @@ export default function CustomerDetailView({
       warrantyCount,
       renewalsCount,
       creditScore: score,
+      warnings,
     };
-  }, [customer.orders, customer.createdAt, activityLogs]);
+  }, [customer.orders, customer.createdAt, activityLogs, customer.note]);
 
   const tagCfg = getCustomerTagConfig(customer.tag || 'NEW');
   const ratingCfg = getCreditRatingConfig(customer.creditRating || 'B');
@@ -658,104 +664,92 @@ export default function CustomerDetailView({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* LEFT COLUMN: Customer Info Summary Card */}
-        <div className="space-y-6">
-          <div className="p-6 rounded-2xl bg-[#1a1f2e]/50 border border-white/5 flex flex-col space-y-5">
-            {/* Avatar & Badges */}
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-xl border border-indigo-500/20">
-                {customer.name.charAt(0).toUpperCase()}
-              </div>
-              <div className="space-y-1">
-                <h2 className="text-base font-extrabold text-white">{customer.name}</h2>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded ${tagCfg.color}`}>
-                    {tagCfg.emoji} {tagCfg.label}
-                  </span>
-                  <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded ${ratingCfg.color}`}>
-                    Xếp hạng: {ratingCfg.label}
-                  </span>
-                </div>
-              </div>
+      {/* Top Profile Grid (Hàng 1) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Card 1: Thông tin khách hàng */}
+        <div className="p-6 rounded-2xl bg-[#1a1f2e]/50 border border-white/5 flex flex-col space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-lg border border-indigo-500/20 flex-shrink-0">
+              {customer.name.charAt(0).toUpperCase()}
             </div>
-
-            {/* Contact details list */}
-            <div className="border-t border-white/5 pt-4 space-y-3.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-2"><Phone className="w-3.5 h-3.5" /> SĐT:</span>
-                <span className="text-white font-mono font-medium">{customer.phone || '—'}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-2"><MessageCircle className="w-3.5 h-3.5" /> Zalo:</span>
-                <span className="text-white font-mono font-medium">{customer.zalo || customer.phone || '—'}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-2">🌐 Telegram:</span>
-                <span className="text-white font-mono font-medium">{customer.telegram || '—'}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-2">🌐 Facebook:</span>
-                {customer.facebook ? (
-                  <a
-                    href={customer.facebook.startsWith('http') ? customer.facebook : `https://${customer.facebook}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-indigo-400 hover:underline truncate max-w-[180px]"
-                  >
-                    Link FB
-                  </a>
-                ) : (
-                  <span className="text-white">—</span>
-                )}
-              </div>
-              <div className="flex items-center justify-between text-xs border-t border-white/5 pt-3">
-                <span className="text-slate-400 flex items-center gap-2">📅 Ngày tạo:</span>
-                <span className="text-white font-mono font-medium">{formatDateShort(customer.createdAt)}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-2">⚙️ Trạng thái:</span>
-                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${customer.isDeleted ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
-                  {customer.isDeleted ? 'Lưu trữ' : 'Hoạt động'}
+            <div className="space-y-1">
+              <h2 className="text-base font-extrabold text-white">{customer.name}</h2>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded ${tagCfg.color}`}>
+                  {tagCfg.emoji} {tagCfg.label}
                 </span>
+                {stats.warnings && stats.warnings.map((w: string, idx: number) => (
+                  <span key={idx} className="inline-flex items-center text-[9px] font-bold px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-sm" title={w}>
+                    {w}
+                  </span>
+                ))}
               </div>
             </div>
+          </div>
+          <div className="space-y-1 flex-1">
+            <span className="text-[10px] text-slate-500 uppercase font-bold">Ghi chú khách hàng</span>
+            <p className="text-xs text-slate-300 bg-white/5 p-3 rounded-lg border border-white/5 leading-relaxed min-h-[60px] whitespace-pre-line">
+              {customer.note || 'Không có ghi chú.'}
+            </p>
+          </div>
+          <button
+            onClick={() => setEditModalOpen(true)}
+            className="w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold text-slate-300 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all cursor-pointer h-9"
+          >
+            <Edit2 className="w-3 h-3" /> Chỉnh sửa thông tin
+          </button>
+        </div>
 
-            {/* Note block */}
-            <div className="border-t border-white/5 pt-4 space-y-1">
-              <span className="text-[10px] text-slate-500 uppercase font-bold">Ghi chú khách hàng</span>
-              <p className="text-xs text-slate-300 bg-white/5 p-3 rounded-lg border border-white/5 leading-relaxed min-h-[50px] whitespace-pre-line">
-                {customer.note || 'Không có ghi chú.'}
-              </p>
+        {/* Card 2: Thông tin liên hệ */}
+        <div className="p-6 rounded-2xl bg-[#1a1f2e]/50 border border-white/5 flex flex-col justify-between space-y-4">
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Thông tin liên hệ</h3>
+            <div className="flex items-center justify-between text-xs border-b border-white/5 pb-2">
+              <span className="text-slate-400 flex items-center gap-1.5"><Phone className="w-3.5 h-3.5" /> SĐT:</span>
+              <span className="text-white font-mono font-medium">{customer.phone || '—'}</span>
             </div>
-
-            {/* Edit details trigger */}
-            <button
-              onClick={() => setEditModalOpen(true)}
-              className="w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold text-slate-300 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all cursor-pointer"
-            >
-              <Edit2 className="w-3.5 h-3.5" /> Chỉnh sửa thông tin
-            </button>
+            <div className="flex items-center justify-between text-xs border-b border-white/5 pb-2">
+              <span className="text-slate-400 flex items-center gap-1.5"><MessageCircle className="w-3.5 h-3.5" /> Zalo:</span>
+              <span className="text-white font-mono font-medium">{customer.zalo || customer.phone || '—'}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs border-b border-white/5 pb-2">
+              <span className="text-slate-400 flex items-center gap-1.5">🌐 Telegram:</span>
+              <span className="text-white font-mono font-medium">{customer.telegram || '—'}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs pb-1">
+              <span className="text-slate-400 flex items-center gap-1.5">🌐 Facebook:</span>
+              {customer.facebook ? (
+                <a
+                  href={customer.facebook.startsWith('http') ? customer.facebook : `https://${customer.facebook}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-indigo-400 hover:underline truncate max-w-[120px] font-medium"
+                >
+                  Link FB
+                </a>
+              ) : (
+                <span className="text-white">—</span>
+              )}
+            </div>
           </div>
 
-          {/* Quick Communication Box */}
           {hasContact && (
-            <div className="p-5 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-3">
-              <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Liên hệ nhanh</h3>
-              <div className="flex flex-wrap gap-2">
+            <div className="space-y-2">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Liên hệ nhanh</span>
+              <div className="flex flex-wrap gap-1.5">
                 {customer.phone && (
-                  <a href={`tel:${customer.phone}`} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 text-xs font-medium border border-emerald-500/20 transition-all">
-                    <Phone className="w-3.5 h-3.5" /> Gọi
+                  <a href={`tel:${customer.phone}`} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 text-[11px] font-semibold border border-emerald-500/20 transition-all h-7">
+                    <Phone className="w-3 h-3" /> Gọi
                   </a>
                 )}
                 {(customer.zalo || customer.phone) && (
-                  <a href={`https://zalo.me/${customer.zalo || customer.phone}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-500/10 text-teal-400 hover:bg-teal-500/20 text-xs font-medium border border-teal-500/20 transition-all">
+                  <a href={`https://zalo.me/${customer.zalo || customer.phone}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-500/10 text-teal-400 hover:bg-teal-500/20 text-[11px] font-semibold border border-teal-500/20 transition-all h-7">
                     💬 Zalo
                   </a>
                 )}
                 {customer.telegram && (
-                  <a href={`https://t.me/${customer.telegram.replace('@', '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 text-xs font-medium border border-sky-500/20 transition-all">
-                    🌐 Telegram
+                  <a href={`https://t.me/${customer.telegram.replace('@', '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 text-[11px] font-semibold border border-sky-500/20 transition-all h-7">
+                    🌐 Tele
                   </a>
                 )}
               </div>
@@ -763,167 +757,179 @@ export default function CustomerDetailView({
           )}
         </div>
 
-        {/* RIGHT COLUMN: Statistics, Payments and Orders */}
-        <div className="lg:col-span-2 space-y-6">
-          
-          {/* SECTION: 9-METRIC GRID */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tổng chi tiêu</span>
-              <span className="text-xl font-black text-blue-400 font-mono mt-1.5 block">{formatCurrency(stats.totalSpent)}</span>
-            </div>
-            <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tổng doanh thu</span>
-              <span className="text-xl font-black text-sky-400 font-mono mt-1.5 block">{formatCurrency(stats.totalSpent - stats.totalRefund)}</span>
-            </div>
-            <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tổng lợi nhuận</span>
-              <span className="text-xl font-black text-emerald-400 font-mono mt-1.5 block">{formatCurrency(stats.totalProfit)}</span>
-            </div>
-            <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tổng số đơn</span>
-              <span className="text-xl font-black text-white font-mono mt-1.5 block">{stats.totalOrders} đơn</span>
-            </div>
-            <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Số lần gia hạn</span>
-              <span className="text-xl font-black text-amber-400 font-mono mt-1.5 block">{stats.renewalsCount} lần</span>
-            </div>
-            <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Sự cố bảo hành</span>
-              <span className="text-xl font-black text-rose-400 font-mono mt-1.5 block">{stats.warrantyCount} lần</span>
-            </div>
-            <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tài khoản đang dùng</span>
-              <span className="text-xl font-black text-emerald-400 font-mono mt-1.5 block">{stats.activeAccountsCount} tài khoản</span>
-            </div>
-            <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Sắp hết hạn</span>
-              <span className="text-xl font-black text-amber-500 font-mono mt-1.5 block">{stats.expiringSoonCount} tài khoản</span>
-            </div>
-            <div className={`p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between ring-1 ${stats.creditScore >= 85 ? 'ring-emerald-500/20' : stats.creditScore >= 70 ? 'ring-amber-500/20' : 'ring-rose-500/20'}`}>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Điểm uy tín</span>
-              <span className="text-base font-black text-slate-100 mt-1.5 block">
-                {ratingCfg.label} <span className="text-xs text-indigo-400 font-normal">({stats.creditScore}/100)</span>
-              </span>
-            </div>
-          </div>
-
-          {/* SECTION: MONTHLY PURCHASE TREND CHART */}
-          <div className="p-5 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-4">
-            <div>
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                📈 Xu hướng mua hàng & Lợi nhuận (12 Tháng)
-              </h3>
-              <p className="text-[10.5px] text-slate-500 mt-1">Biểu đồ chi tiêu, lợi nhuận ròng và hoàn tiền theo từng tháng của khách hàng.</p>
-            </div>
-            
-            {!mounted ? (
-              <div className="w-full h-64 rounded-xl bg-white/5 border border-white/5 animate-pulse flex items-center justify-center text-slate-500 text-xs">
-                Đang tải biểu đồ...
+        {/* Card 3: Điểm uy tín */}
+        <div className="p-6 rounded-2xl bg-[#1a1f2e]/50 border border-white/5 flex flex-col justify-between space-y-4">
+          <div className="space-y-3 flex-1">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Xếp hạng & Điểm uy tín</h3>
+            <div className="p-4 rounded-xl bg-white/5 border border-white/5 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase font-bold">Xếp hạng chữ</p>
+                <p className={`text-xl font-black mt-0.5 ${ratingCfg.color}`}>{ratingCfg.label}</p>
               </div>
-            ) : (
-              <div className="w-full h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="colorRefunds" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" vertical={false} />
-                    <XAxis
-                      dataKey="month"
-                      stroke="rgba(255, 255, 255, 0.4)"
-                      fontSize={10}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <YAxis
-                      stroke="rgba(255, 255, 255, 0.4)"
-                      fontSize={10}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(value) => {
-                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
-                        if (value >= 1000) return `${(value / 1000).toFixed(0)}K`;
-                        return value.toString();
-                      }}
-                    />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#131722', borderColor: 'rgba(255, 255, 255, 0.1)', borderRadius: '12px' }}
-                      labelStyle={{ color: '#fff', fontWeight: 'bold', fontSize: '11px' }}
-                      itemStyle={{ fontSize: '11px', padding: '2px 0' }}
-                      formatter={(value: any) => [formatCurrency(Number(value) || 0), '']}
-                    />
-                    <Area type="monotone" name="Chi tiêu" dataKey="revenue" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" />
-                    <Area type="monotone" name="Lợi nhuận" dataKey="profit" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorProfit)" />
-                    <Area type="monotone" name="Hoàn tiền" dataKey="refunds" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#colorRefunds)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-
-          {/* LOWER GRID: TIMELINESS + REAL PAYMENTS */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Payment Timeliness */}
-            <div className="p-5 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-4">
-              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                <Clock className="w-4 h-4 text-indigo-400" /> Tính lịch sự thanh toán
-              </h4>
-              <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                <div className="p-3 bg-white/2 rounded-xl border border-white/5 flex flex-col justify-between">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase">Đúng hạn</p>
-                  <p className="text-base font-bold text-emerald-400 mt-1">{stats.paidOnTimeCount} lần</p>
-                </div>
-                <div className="p-3 bg-white/2 rounded-xl border border-white/5 flex flex-col justify-between">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase">Trễ hạn</p>
-                  <p className="text-base font-bold text-amber-500 mt-1">{stats.latePaymentCount} lần</p>
-                </div>
-                <div className="p-3 bg-white/2 rounded-xl border border-white/5 flex flex-col justify-between">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase">Quá hạn hiện tại</p>
-                  <p className="text-base font-bold text-rose-500 mt-1">{stats.overdueCount} đơn</p>
-                </div>
-                <div className="p-3 bg-white/2 rounded-xl border border-white/5 flex flex-col justify-between">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase">Trung bình trễ</p>
-                  <p className="text-base font-bold text-orange-400 mt-1">{stats.avgDaysLate} ngày</p>
-                </div>
+              <div className="text-right">
+                <p className="text-[10px] text-slate-400 uppercase font-bold">Điểm số</p>
+                <p className="text-xl font-black text-indigo-400 font-mono mt-0.5">{stats.creditScore} / 100</p>
               </div>
             </div>
-
-            {/* Payment Records Feed */}
-            <div className="p-5 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-4 flex flex-col justify-between">
-              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                <FileText className="w-4 h-4 text-indigo-400" /> Lịch sử thanh toán
-              </h4>
-              {customer.paymentRecords && customer.paymentRecords.length > 0 ? (
-                <div className="space-y-2 max-h-[140px] overflow-y-auto pr-1 flex-1">
-                  {customer.paymentRecords.slice(0, 5).map((pr: any) => (
-                    <div key={pr.id} className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all text-[11px]">
-                      <div>
-                        <p className="text-slate-300 font-medium">{pr.order?.orderCode ? `Đơn ${pr.order.orderCode}` : 'Nhiều đơn'}</p>
-                        <p className="text-[9px] text-slate-500">{formatDateShort(pr.paidAt)} · {pr.method}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-emerald-400 font-bold">+{formatCurrency(pr.amount)}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-center text-xs text-slate-500 py-6 flex-1 flex items-center justify-center">Chưa có giao dịch thanh toán.</p>
-              )}
+            <div className="text-[11px] text-slate-400 leading-relaxed space-y-1 pt-1">
+              <p>• <strong className="text-emerald-400">A / A+</strong>: Uy tín cao, thanh toán đúng hạn.</p>
+              <p>• <strong className="text-amber-400">B</strong>: Trung bình, thỉnh thoảng trễ hạn.</p>
+              <p>• <strong className="text-rose-400">C / D</strong>: Rủi ro cao, thường xuyên nợ lâu.</p>
             </div>
           </div>
+          <div className="flex items-center justify-between text-xs pt-2 border-t border-white/5">
+            <span className="text-slate-500">Khách hàng từ:</span>
+            <span className="text-slate-300 font-mono font-semibold">{formatDateShort(customer.createdAt)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION: KPI GRID (Hàng 2 - Tất cả trên cùng 1 hàng) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+        <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tổng chi tiêu</span>
+          <span className="text-base font-black text-blue-400 font-mono mt-1.5 block">{formatCurrency(stats.totalSpent)}</span>
+        </div>
+        <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Doanh thu</span>
+          <span className="text-base font-black text-sky-400 font-mono mt-1.5 block">{formatCurrency(stats.totalSpent - stats.totalRefund)}</span>
+        </div>
+        <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Lợi nhuận</span>
+          <span className="text-base font-black text-emerald-400 font-mono mt-1.5 block">{formatCurrency(stats.totalProfit)}</span>
+        </div>
+        <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Tổng đơn</span>
+          <span className="text-base font-black text-white font-mono mt-1.5 block">{stats.totalOrders} đơn</span>
+        </div>
+        <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Gia hạn</span>
+          <span className="text-base font-black text-amber-400 font-mono mt-1.5 block">{stats.renewalsCount} lần</span>
+        </div>
+        <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Sự cố</span>
+          <span className="text-base font-black text-rose-400 font-mono mt-1.5 block">{stats.warrantyCount} lần</span>
+        </div>
+        <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">TK đang dùng</span>
+          <span className="text-base font-black text-emerald-400 font-mono mt-1.5 block">{stats.activeAccountsCount} TK</span>
+        </div>
+        <div className="p-4 rounded-2xl bg-[#1a1f2e]/40 border border-white/5 hover:border-indigo-500/20 transition-all flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Sắp hết hạn</span>
+          <span className="text-base font-black text-amber-500 font-mono mt-1.5 block">{stats.expiringSoonCount} TK</span>
+        </div>
+      </div>
+
+      {/* SECTION: MONTHLY PURCHASE TREND CHART (Full width) */}
+      <div className="p-5 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-4">
+        <div>
+          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+            📈 Xu hướng mua hàng & Lợi nhuận (12 Tháng)
+          </h3>
+          <p className="text-[10.5px] text-slate-500 mt-1">Biểu đồ chi tiêu, lợi nhuận ròng và hoàn tiền theo từng tháng của khách hàng.</p>
+        </div>
+        
+        {!mounted ? (
+          <div className="w-full h-64 rounded-xl bg-white/5 border border-white/5 animate-pulse flex items-center justify-center text-slate-500 text-xs">
+            Đang tải biểu đồ...
+          </div>
+        ) : (
+          <div className="w-full h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="colorRefunds" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2} />
+                    <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" vertical={false} />
+                <XAxis dataKey="month" stroke="rgba(255, 255, 255, 0.4)" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis
+                  stroke="rgba(255, 255, 255, 0.4)"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value) => {
+                    if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+                    if (value >= 1000) return `${(value / 1000).toFixed(0)}K`;
+                    return value.toString();
+                  }}
+                />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#131722', borderColor: 'rgba(255, 255, 255, 0.1)', borderRadius: '12px' }}
+                  labelStyle={{ color: '#fff', fontWeight: 'bold', fontSize: '11px' }}
+                  itemStyle={{ fontSize: '11px', padding: '2px 0' }}
+                  formatter={(value: any) => [formatCurrency(Number(value) || 0), '']}
+                />
+                <Area type="monotone" name="Chi tiêu" dataKey="revenue" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" />
+                <Area type="monotone" name="Lợi nhuận" dataKey="profit" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorProfit)" />
+                <Area type="monotone" name="Hoàn tiền" dataKey="refunds" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#colorRefunds)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* LOWER GRID: TIMELINESS + REAL PAYMENTS (Full width) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Payment Timeliness */}
+        <div className="p-5 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-4">
+          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+            <Clock className="w-4 h-4 text-indigo-400" /> Tính lịch sự thanh toán
+          </h4>
+          <div className="grid grid-cols-2 gap-2 text-center text-xs">
+            <div className="p-3 bg-white/2 rounded-xl border border-white/5 flex flex-col justify-between">
+              <p className="text-[10px] text-slate-500 font-bold uppercase">Đúng hạn</p>
+              <p className="text-base font-bold text-emerald-400 mt-1">{stats.paidOnTimeCount} lần</p>
+            </div>
+            <div className="p-3 bg-white/2 rounded-xl border border-white/5 flex flex-col justify-between">
+              <p className="text-[10px] text-slate-500 font-bold uppercase">Trễ hạn</p>
+              <p className="text-base font-bold text-amber-500 mt-1">{stats.latePaymentCount} lần</p>
+            </div>
+            <div className="p-3 bg-white/2 rounded-xl border border-white/5 flex flex-col justify-between">
+              <p className="text-[10px] text-slate-500 font-bold uppercase">Quá hạn hiện tại</p>
+              <p className="text-base font-bold text-rose-500 mt-1">{stats.overdueCount} đơn</p>
+            </div>
+            <div className="p-3 bg-white/2 rounded-xl border border-white/5 flex flex-col justify-between">
+              <p className="text-[10px] text-slate-500 font-bold uppercase">Trung bình trễ</p>
+              <p className="text-base font-bold text-orange-400 mt-1">{stats.avgDaysLate} ngày</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Payment Records Feed */}
+        <div className="p-5 rounded-2xl bg-[#131722]/50 border border-white/5 space-y-4 flex flex-col justify-between">
+          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+            <FileText className="w-4 h-4 text-indigo-400" /> Lịch sử thanh toán
+          </h4>
+          {customer.paymentRecords && customer.paymentRecords.length > 0 ? (
+            <div className="space-y-2 max-h-[140px] overflow-y-auto pr-1 flex-1">
+              {customer.paymentRecords.slice(0, 5).map((pr: any) => (
+                <div key={pr.id} className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all text-[11px]">
+                  <div>
+                    <p className="text-slate-300 font-medium">{pr.order?.orderCode ? `Đơn ${pr.order.orderCode}` : 'Nhiều đơn'}</p>
+                    <p className="text-[9px] text-slate-500">{formatDateShort(pr.paidAt)} · {pr.method}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-emerald-400 font-bold">+{formatCurrency(pr.amount)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-center text-xs text-slate-500 py-6 flex-1 flex items-center justify-center">Chưa có giao dịch thanh toán.</p>
+          )}
+        </div>
+      </div>
 
           {/* TAB SYSTEM SECTION */}
           <div className="space-y-4">
@@ -979,6 +985,7 @@ export default function CustomerDetailView({
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-white/5 bg-white/2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        <th className="px-5 py-3.5 w-12 text-center">STT</th>
                         <th className="px-5 py-3.5">Mã đơn</th>
                         <th className="px-5 py-3.5">Dịch vụ & Gói</th>
                         <th className="px-5 py-3.5">Tài chính</th>
@@ -989,12 +996,15 @@ export default function CustomerDetailView({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5 text-xs text-slate-300">
-                      {customer.orders.map((o: any) => {
+                      {customer.orders.map((o: any, idx: number) => {
                         const diff = new Date(o.endDate).getTime() - new Date().getTime();
                         const remaining = Math.ceil(diff / (24 * 60 * 60 * 1000));
 
                         return (
                           <tr key={o.id} className="hover:bg-white/2 transition-colors">
+                            {/* STT */}
+                            <td className="px-5 py-4 text-center font-mono text-slate-500">{idx + 1}</td>
+
                             {/* Order Code */}
                             <td className="px-5 py-4 font-bold text-indigo-400">
                               <Link href={`/admin/orders/${o.id}`} className="hover:underline">
@@ -1014,17 +1024,38 @@ export default function CustomerDetailView({
                             </td>
 
                             {/* Financial */}
-                            <td className="px-5 py-4 font-mono font-medium">
-                              <p className="text-emerald-400 font-bold">Bán: {formatCurrency(o.salePrice)}</p>
-                              <p className="text-slate-400 text-[10px]">Vốn: {formatCurrency(o.costPrice)}</p>
-                              <p className="text-indigo-300 font-bold border-t border-white/5 pt-0.5 mt-0.5">Lãi: {formatCurrency(o.profit)}</p>
+                            <td className="px-5 py-4 font-mono text-[11px] text-left">
+                              <div className="space-y-0.5">
+                                <p className="text-emerald-400 font-bold font-mono">Bán: {formatCurrency(o.salePrice)}</p>
+                                <p className="text-slate-400 font-mono">Vốn/Gốc: {formatCurrency(o.costPrice)}</p>
+                                <p className="text-indigo-300 font-bold font-mono">Lợi nhuận: {formatCurrency(o.profit)}</p>
+                                <p className="text-blue-400 font-mono">Đã TT: {formatCurrency(o.paidAmount)}</p>
+                                {o.salePrice - o.paidAmount > 0 ? (
+                                  <p className="text-rose-400 font-semibold font-mono">Nợ: {formatCurrency(o.salePrice - o.paidAmount)}</p>
+                                ) : (
+                                  <p className="text-slate-500 font-mono">Nợ: 0đ</p>
+                                )}
+                                {(() => {
+                                  const totalRefund = o.refundHistories?.reduce((sum: number, r: any) => sum + r.amount, 0) || 0;
+                                  return totalRefund > 0 ? (
+                                    <p className="text-rose-500 font-bold border-t border-white/5 pt-0.5 mt-0.5 font-mono">Hoàn: {formatCurrency(totalRefund)}</p>
+                                  ) : null;
+                                })()}
+                              </div>
                             </td>
 
                             {/* Duration */}
                             <td className="px-5 py-4">
                               <div className="space-y-1 flex flex-col items-start">
-                                <CountdownBadge endDate={o.endDate} status={o.status} />
-                                <p className="text-[10px] text-slate-500 font-mono">{formatDateShort(o.endDate)}</p>
+                                {(() => {
+                                  const latestRefund = o.refundHistories && o.refundHistories.length > 0
+                                    ? [...o.refundHistories].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+                                    : null;
+                                  const errorDateVal = latestRefund ? (latestRefund.errorDate || latestRefund.createdAt) : o.updatedAt;
+                                  return (
+                                    <CountdownBadge endDate={o.endDate} status={o.status} completedAt={errorDateVal} />
+                                  );
+                                })()}
                               </div>
                             </td>
 
@@ -1047,30 +1078,30 @@ export default function CustomerDetailView({
                               <div className="flex flex-wrap gap-1.5 items-center justify-center max-w-[210px]">
                                 <Link
                                   href={`/admin/orders/${o.id}`}
-                                  className="px-2 py-0.5 rounded bg-slate-500/10 hover:bg-slate-500/25 border border-slate-500/20 text-slate-400 hover:text-white transition-all"
+                                  className="btn-compact font-semibold"
                                   title="Xem chi tiết đơn gốc"
                                 >
-                                  👁️ Xem đơn
+                                  👁️ Xem
                                 </Link>
                                 {['ACTIVE', 'EXPIRING_SOON', 'EXPIRED'].includes(o.status) && (
                                   <>
                                     <button
                                       onClick={() => openRenewModal(o)}
-                                      className="px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/25 border border-indigo-500/20 text-indigo-400 hover:text-white transition-all cursor-pointer"
+                                      className="btn-compact btn-compact-success font-semibold"
                                       title="Gia hạn"
                                     >
                                       🔄 Gia hạn
                                     </button>
                                     <button
                                       onClick={() => openWarrantyModal(o)}
-                                      className="px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/25 border border-blue-500/20 text-blue-400 hover:text-white transition-all cursor-pointer"
+                                      className="btn-compact btn-compact-danger font-semibold"
                                       title="Báo lỗi bảo hành"
                                     >
                                       🛠 Báo lỗi
                                     </button>
                                     <button
                                       onClick={() => openRefundModal(o)}
-                                      className="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/25 border border-rose-500/20 text-rose-400 hover:text-white transition-all cursor-pointer"
+                                      className="btn-compact btn-compact-danger font-semibold"
                                       title="Xử lý hoàn tiền cho khách"
                                     >
                                       💸 Hoàn tiền
@@ -1079,7 +1110,7 @@ export default function CustomerDetailView({
                                 )}
                                 <button
                                   onClick={() => openSourceModal(o)}
-                                  className="px-2 py-0.5 rounded bg-purple-500/10 hover:bg-purple-500/25 border border-purple-500/20 text-purple-400 hover:text-white transition-all cursor-pointer"
+                                  className="btn-compact btn-compact-primary font-semibold"
                                   title="Đổi nguồn hàng"
                                 >
                                   📦 Nguồn
@@ -1091,7 +1122,7 @@ export default function CustomerDetailView({
                       })}
                       {customer.orders.length === 0 && (
                         <tr>
-                          <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
+                          <td colSpan={8} className="px-6 py-8 text-center text-slate-500">
                             Khách hàng chưa có đơn hàng nào.
                           </td>
                         </tr>
@@ -1107,6 +1138,7 @@ export default function CustomerDetailView({
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-white/5 bg-white/2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        <th className="px-5 py-3.5 w-12 text-center">STT</th>
                         <th className="px-5 py-3.5">Dịch vụ</th>
                         <th className="px-5 py-3.5">Email tài khoản</th>
                         <th className="px-5 py-3.5">Mật khẩu</th>
@@ -1116,8 +1148,9 @@ export default function CustomerDetailView({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5 text-xs text-slate-300">
-                      {customer.orders.map((o: any) => (
+                      {customer.orders.map((o: any, idx: number) => (
                         <tr key={o.id} className="hover:bg-white/2 transition-colors">
+                          <td className="px-5 py-4 text-center font-mono text-slate-500">{idx + 1}</td>
                           <td className="px-5 py-4">
                             <div className="flex items-center gap-1.5">
                               <span className="text-base">{o.service?.logo || '🔑'}</span>
@@ -1161,7 +1194,15 @@ export default function CustomerDetailView({
                             {formatDateShort(o.endDate)}
                           </td>
                           <td className="px-5 py-4">
-                            <CountdownBadge endDate={o.endDate} status={o.status} />
+                             {(() => {
+                               const latestRefund = o.refundHistories && o.refundHistories.length > 0
+                                 ? [...o.refundHistories].sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+                                 : null;
+                               const errorDateVal = latestRefund ? (latestRefund.errorDate || latestRefund.createdAt) : o.updatedAt;
+                               return (
+                                 <CountdownBadge endDate={o.endDate} status={o.status} completedAt={errorDateVal} />
+                               );
+                             })()}
                           </td>
                           <td className="px-5 py-4">
                             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold border ${getStatusColor(o.status)}`}>
@@ -1172,7 +1213,7 @@ export default function CustomerDetailView({
                       ))}
                       {customer.orders.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                          <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
                             Khách hàng chưa có tài khoản nào.
                           </td>
                         </tr>
@@ -1188,6 +1229,7 @@ export default function CustomerDetailView({
                   <table className="w-full text-left">
                     <thead>
                       <tr className="border-b border-white/5 bg-white/2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        <th className="px-5 py-3.5 w-12 text-center">STT</th>
                         <th className="px-5 py-3.5">Mã đơn & Dịch vụ</th>
                         <th className="px-5 py-3.5">Ngày báo lỗi</th>
                         <th className="px-5 py-3.5">Nội dung lỗi</th>
@@ -1196,8 +1238,9 @@ export default function CustomerDetailView({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5 text-xs text-slate-300">
-                      {warrantyHistoryList.map((rh: any) => (
+                      {warrantyHistoryList.map((rh: any, idx: number) => (
                         <tr key={rh.id} className="hover:bg-white/2 transition-colors">
+                          <td className="px-5 py-4 text-center font-mono text-slate-500">{idx + 1}</td>
                           <td className="px-5 py-4">
                             <div>
                               <strong className="text-indigo-400 block font-mono">{rh.orderCode}</strong>
@@ -1223,7 +1266,7 @@ export default function CustomerDetailView({
                       ))}
                       {warrantyHistoryList.length === 0 && (
                         <tr>
-                          <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
+                          <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
                             Không có lịch sử bảo hành/hoàn tiền nào cho khách hàng này.
                           </td>
                         </tr>
@@ -1260,9 +1303,6 @@ export default function CustomerDetailView({
 
             </div>
           </div>
-
-        </div>
-      </div>
 
       {/* --- MODAL: EDIT CUSTOMER DETAILS --- */}
       {editModalOpen && (

@@ -13,6 +13,7 @@ export async function GET() {
     // Fetch all refund histories with their supplier source cache
     const refundHistories = await prisma.refundHistory.findMany({
       select: {
+        amount: true,
         sourceStatus: true,
         sourceRefundExpected: true,
         sourceRefundActual: true,

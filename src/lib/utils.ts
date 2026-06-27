@@ -324,6 +324,96 @@ export function calculateUsedDays(startDate: Date | string): number {
 // #67 - Credit rating calculation
 // ==========================================
 
+export interface CreditRatingBreakdown {
+  score: number;
+  rating: string;
+  onTime: number;
+  noDebt: number;
+  spend: number;
+  volume: number;
+  longevity: number;
+  noRefund: number;
+  noError: number;
+}
+
+export function calculateDetailedCreditRating(stats: {
+  totalOrders: number;
+  paidOnTimeCount: number;
+  latePaymentCount: number;
+  currentDebtCount: number;
+  totalSpend: number;
+  daysSinceCreated?: number;
+  renewalsCount?: number;
+  warrantyCount?: number;
+  totalRefund?: number;
+}): CreditRatingBreakdown {
+  const { 
+    totalOrders, 
+    totalSpend, 
+    warrantyCount = 0,
+    totalRefund = 0
+  } = stats;
+  
+  if (totalOrders === 0) {
+    return {
+      score: 0,
+      rating: 'NEW',
+      onTime: 0,
+      noDebt: 0,
+      spend: 0,
+      volume: 0,
+      longevity: 0,
+      noRefund: 0,
+      noError: 0,
+    };
+  }
+
+  // 1. Tỷ lệ hoàn tiền: max 40
+  const refundRate = totalSpend > 0 ? (totalRefund / totalSpend) : 0;
+  const refundRateScore = Math.max(0, Math.min(40, Math.round((1 - refundRate) * 40)));
+
+  // 2. Tỷ lệ bảo hành: max 30
+  const warrantyRate = totalOrders > 0 ? (warrantyCount / totalOrders) : 0;
+  const warrantyRateScore = Math.max(0, Math.min(30, Math.round((1 - warrantyRate) * 30)));
+
+  // 3. Tổng chi tiêu: max 20
+  let spendScore = 0;
+  if (totalSpend >= 10000000) spendScore = 20;
+  else if (totalSpend >= 5000000) spendScore = 16;
+  else if (totalSpend >= 2000000) spendScore = 12;
+  else if (totalSpend >= 500000) spendScore = 8;
+  else if (totalSpend > 0) spendScore = 4;
+
+  // 4. Số đơn đã mua: max 10
+  let volumeScore = 0;
+  if (totalOrders >= 20) volumeScore = 10;
+  else if (totalOrders >= 10) volumeScore = 8;
+  else if (totalOrders >= 5) volumeScore = 6;
+  else if (totalOrders >= 2) volumeScore = 4;
+  else if (totalOrders >= 1) volumeScore = 2;
+
+  const score = Math.max(0, Math.min(100, refundRateScore + warrantyRateScore + spendScore + volumeScore));
+
+  let rating = 'B';
+  if (score >= 90) rating = 'S';
+  else if (score >= 75) rating = 'A';
+  else if (score >= 50) rating = 'B';
+  else if (score >= 30) rating = 'C';
+  else rating = 'D';
+
+  return {
+    score,
+    rating,
+    onTime: 0,
+    noDebt: 0,
+    spend: spendScore,
+    volume: volumeScore,
+    longevity: 0,
+    noRefund: refundRateScore,
+    noError: warrantyRateScore,
+  };
+}
+
 export function calculateCreditRating(stats: {
   totalOrders: number;
   paidOnTimeCount: number;
@@ -335,41 +425,7 @@ export function calculateCreditRating(stats: {
   warrantyCount?: number;
   totalRefund?: number;
 }): string {
-  const { 
-    totalOrders, 
-    paidOnTimeCount, 
-    latePaymentCount, 
-    currentDebtCount, 
-    totalSpend, 
-    daysSinceCreated = 0, 
-    renewalsCount = 0, 
-    warrantyCount = 0, 
-    totalRefund = 0 
-  } = stats;
-  
-  if (totalOrders === 0) return 'NEW';
-
-  const onTimeRate = paidOnTimeCount / totalOrders;
-  const refundRate = totalSpend > 0 ? (totalRefund / totalSpend) : 0;
-
-  // Formula matching crm.ts
-  let score = 75; // base
-  score += Math.min(15, totalSpend / 200000);
-  score += onTimeRate * 15;
-  score -= currentDebtCount * 5;
-  score -= latePaymentCount * 2;
-  score += Math.min(10, renewalsCount * 2.5);
-  score -= Math.min(15, warrantyCount * 3);
-  score -= Math.min(15, refundRate * 100);
-  score += Math.min(10, daysSinceCreated / 30);
-
-  score = Math.max(0, Math.min(100, Math.round(score)));
-
-  if (score >= 95) return 'S';
-  if (score >= 85) return 'A';
-  if (score >= 70) return 'B';
-  if (score >= 50) return 'C';
-  return 'D';
+  return calculateDetailedCreditRating(stats).rating;
 }
 
 // ==========================================
@@ -462,4 +518,56 @@ export function exportToCSV(data: Record<string, unknown>[], filename: string, h
 export function calculatePercentChange(current: number, previous: number): number {
   if (previous === 0) return current > 0 ? 100 : 0;
   return Math.round(((current - previous) / previous) * 100);
+}
+
+// Calculate customer warning labels based on order metrics and notes
+export function getCustomerWarnings(stats: {
+  totalOrders: number;
+  warrantyCount: number;
+  totalSpend: number;
+  totalRefund: number;
+  note?: string | null;
+}) {
+  const warnings: string[] = [];
+  const { totalOrders, warrantyCount, totalSpend, totalRefund, note } = stats;
+
+  const warrantyRate = totalOrders >= 3 ? (warrantyCount / totalOrders) : 0;
+  if (warrantyRate >= 0.3) {
+    warnings.push(`🚨 Tỷ lệ lỗi cao (${Math.round(warrantyRate * 100)}%)`);
+  }
+
+  const refundRate = totalSpend >= 500000 ? (totalRefund / totalSpend) : 0;
+  if (refundRate >= 0.25) {
+    warnings.push(`💸 Tỷ lệ hoàn tiền cao (${Math.round(refundRate * 100)}%)`);
+  }
+
+  if (note) {
+    const noteLower = note.toLowerCase();
+    if (['spam', 'bùng', 'quỵt', 'khoá', 'lừa đảo', 'phốt', 'black'].some(keyword => noteLower.includes(keyword))) {
+      warnings.push(`⚠️ Cảnh báo hành vi (Spam/Bùng)`);
+    }
+  }
+
+  return warnings;
+}
+
+// Calculate supplier source warning labels based on metrics
+export function getSourceWarnings(stats: {
+  totalOrders: number;
+  totalErrors: number;
+  netDebt: number;
+}) {
+  const warnings: string[] = [];
+  const { totalOrders, totalErrors, netDebt } = stats;
+
+  const errorRate = totalOrders >= 5 ? (totalErrors / totalOrders) : 0;
+  if (errorRate >= 0.15) {
+    warnings.push(`🚨 Tỷ lệ lỗi cao (${Math.round(errorRate * 100)}%)`);
+  }
+
+  if (netDebt >= 1000000) {
+    warnings.push(`💸 Nợ lớn (${formatCurrency(netDebt)})`);
+  }
+
+  return warnings;
 }

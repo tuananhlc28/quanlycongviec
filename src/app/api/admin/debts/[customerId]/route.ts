@@ -29,7 +29,7 @@ export async function GET(
         customerId,
         paymentStatus: { in: ['UNPAID', 'OVERDUE'] },
       },
-      include: { service: true },
+      include: { service: true, refundHistories: true },
       orderBy: { startDate: 'asc' },
     });
 

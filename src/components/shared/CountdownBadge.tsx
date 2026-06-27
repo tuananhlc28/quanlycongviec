@@ -5,9 +5,10 @@ import { useState, useEffect } from 'react';
 interface CountdownBadgeProps {
   endDate: string | Date;
   status: string;
+  completedAt?: string | Date;
 }
 
-export function CountdownBadge({ endDate, status }: CountdownBadgeProps) {
+export function CountdownBadge({ endDate, status, completedAt }: CountdownBadgeProps) {
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -17,45 +18,61 @@ export function CountdownBadge({ endDate, status }: CountdownBadgeProps) {
     return () => clearInterval(timer);
   }, []);
 
+  const formatDateOnly = (dateInput?: string | Date | null) => {
+    if (!dateInput) return '—';
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return '—';
+    const day = d.getDate().toString().padStart(2, '0');
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  const formatDateTime = (dateInput?: string | Date | null) => {
+    if (!dateInput) return '—';
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return '—';
+    const hours = d.getHours().toString().padStart(2, '0');
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
+  };
+
   const end = new Date(endDate);
   const diffMs = end.getTime() - now.getTime();
 
-  let text = '';
+  let badgeText = '';
   let badgeColor = '';
+  let subtext = '';
 
-  // Check if order has a warning status first
-  if (['WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND'].includes(status)) {
-    text = 'Có sự cố';
+  const isWarranty = ['REPORTED', 'WARRANTY', 'WAIT_SOURCE', 'WARRANTY_PENDING_SOURCE', 'WAIT_CUSTOMER_REFUND', 'WARRANTY_PENDING_REFUND', 'SOURCE_REJECTED', 'WARRANTY_REJECTED'].includes(status);
+  const isCompleted = ['COMPLETED', 'WARRANTY_DONE', 'REFUNDED'].includes(status);
+
+  if (isCompleted) {
+    badgeText = 'Hoàn tất';
+    badgeColor = 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
+    subtext = `Hoàn tất: ${formatDateOnly(completedAt)}`;
+  } else if (isWarranty) {
+    badgeText = status === 'SOURCE_REJECTED' || status === 'WARRANTY_REJECTED' ? 'Từ chối hoàn' : 'Có sự cố';
     badgeColor = 'bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold';
-  } else if (diffMs < 0) {
-    // Overdue
-    const absDiffMs = Math.abs(diffMs);
-    if (absDiffMs < 60 * 60 * 1000) {
-      const minutesVal = Math.floor(absDiffMs / (60 * 1000));
-      text = `Quá hạn ${minutesVal === 0 ? 1 : minutesVal} phút`;
-    } else if (absDiffMs < 24 * 60 * 60 * 1000) {
-      const hours = Math.floor(absDiffMs / (60 * 60 * 1000));
-      text = `Quá hạn ${hours} giờ`;
-    } else {
-      const days = Math.floor(absDiffMs / (24 * 60 * 60 * 1000));
-      text = `Quá hạn ${days} ngày`;
-    }
-    badgeColor = 'bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium';
+    subtext = `Báo lỗi: ${formatDateTime(completedAt)}`;
   } else {
-    // Remaining
-    if (diffMs < 24 * 60 * 60 * 1000) {
-      // Less than 24 hours
-      const diffMinutes = Math.floor(diffMs / (60 * 1000));
-      const hours = Math.floor(diffMinutes / 60);
-      const minutes = diffMinutes % 60;
-      const padHours = hours.toString().padStart(2, '0');
-      const padMinutes = minutes.toString().padStart(2, '0');
-      text = hours > 0 ? `${padHours} giờ ${padMinutes} phút` : `${minutes} phút`;
-      badgeColor = 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse font-medium';
+    // Normal active / expiring / overdue states
+    const days = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+    subtext = `Hạn: ${formatDateOnly(endDate)}`;
+
+    if (status === 'EXPIRING' || status === 'EXPIRING_SOON') {
+      badgeText = `Còn ${days > 0 ? days : 0} ngày`;
+      badgeColor = 'bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium animate-pulse';
+    } else if (diffMs < 0) {
+      const absDiffMs = Math.abs(diffMs);
+      const overdueDays = Math.floor(absDiffMs / (24 * 60 * 60 * 1000));
+      badgeText = overdueDays === 0 ? 'Quá hạn hôm nay' : `Quá hạn ${overdueDays} ngày`;
+      badgeColor = 'bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium';
     } else {
-      // 1 day or more
-      const days = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-      text = `Còn ${days} ngày`;
+      badgeText = `Còn ${days} ngày`;
       badgeColor = days <= 7
         ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 font-medium'
         : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium';
@@ -63,9 +80,14 @@ export function CountdownBadge({ endDate, status }: CountdownBadgeProps) {
   }
 
   return (
-    <span className={`inline-flex items-center justify-center whitespace-nowrap text-xs font-semibold px-2.5 py-0.5 rounded ${badgeColor}`}>
-      {text}
-    </span>
+    <div className="flex flex-col items-start gap-0.5">
+      <span className={`status-badge border ${badgeColor}`}>
+        {badgeText}
+      </span>
+      <span className="text-[10px] text-slate-500 font-mono leading-tight whitespace-pre-line text-left block">
+        {subtext}
+      </span>
+    </div>
   );
 }
 

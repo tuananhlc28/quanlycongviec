@@ -1,23 +1,6 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { calcExpectedClientRefund, calcExpectedSourceRefund } from '@/lib/financials';
-
-/**
- * Batch Orders API — Per-row error handling
- * 
- * Trả về { success: N, failed: M, errors: [{orderId, orderCode, customerName, reason}] }
- * Mỗi đơn xử lý độc lập — đơn lỗi không ảnh hưởng đơn khác.
- * Mọi thao tác đều dựa trên Order ID (UUID) — không bao giờ dùng index hay vị trí.
- */
-
-interface BatchError {
-  orderId: string;
-  orderCode: string;
-  customerName: string;
-  reason: string;
-  action: string;
-}
 
 export async function POST(request: Request) {
   try {
@@ -39,142 +22,156 @@ export async function POST(request: Request) {
     const dbUser = await prisma.user.findFirst({
       where: { OR: [{ id: session.user.id }, { email: session.user.email || '' }] },
     });
-
-    const successIds: string[] = [];
-    const errors: BatchError[] = [];
+    const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '';
     const now = new Date();
 
-    // ==========================================
-    // Batch STATUS updates (WARRANTY flow)
-    // ==========================================
     const statusActionMap: Record<string, string> = {
-      STATUS_WARRANTY: 'WARRANTY',
-      STATUS_PENDING_SOURCE: 'WARRANTY_PENDING_SOURCE',
-      STATUS_PENDING_REFUND: 'WARRANTY_PENDING_REFUND',
-      STATUS_DONE: 'WARRANTY_DONE',
-      STATUS_REJECTED: 'WARRANTY_REJECTED',
+      STATUS_WARRANTY: 'REPORTED',
+      STATUS_PENDING_SOURCE: 'WAIT_SOURCE',
+      STATUS_PENDING_REFUND: 'WAIT_CUSTOMER_REFUND',
+      STATUS_DONE: 'COMPLETED',
+      STATUS_REJECTED: 'SOURCE_REJECTED',
       STATUS_ACTIVE: 'ACTIVE',
     };
 
-    if (statusActionMap[action]) {
-      const newStatus = statusActionMap[action];
+    // Execute everything in a single transaction
+    const result = await prisma.$transaction(async (tx: any) => {
+      // 1. Status Change Action
+      if (statusActionMap[action]) {
+        const newStatus = statusActionMap[action];
+        const orders = await tx.order.findMany({
+          where: { id: { in: orderIds } },
+        });
 
-      // Fetch all orders by ID (not index)
-      const orders = await prisma.order.findMany({
-        where: { id: { in: orderIds } },
-        include: { customer: { select: { name: true } } },
-      });
+        if (orders.length !== orderIds.length) {
+          throw new Error('Một số đơn hàng được chọn không tồn tại.');
+        }
 
-      for (const order of orders) {
-        try {
-          await prisma.order.update({
-            where: { id: order.id }, // Always use ID
+        for (const order of orders) {
+          const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
+          if (isLocked) {
+            throw new Error(`Đơn hàng ${order.orderCode} đã hoàn tất hoặc bị từ chối và đang bị khóa. Vui lòng mở khóa trước.`);
+          }
+
+          await tx.order.update({
+            where: { id: order.id },
             data: { status: newStatus },
           });
-          successIds.push(order.id);
-        } catch (err: any) {
-          errors.push({
-            orderId: order.id,
-            orderCode: order.orderCode,
-            customerName: order.customer?.name || 'N/A',
-            reason: err.message || 'Lỗi cập nhật trạng thái',
-            action,
+
+          await tx.activityLog.create({
+            data: {
+              userId: dbUser?.id || null,
+              action: 'UPDATE_ORDER_STATUS',
+              target: `Order:${order.id}`,
+              details: `Thay đổi trạng thái hàng loạt sang "${newStatus}"`,
+              ipAddress,
+            },
           });
         }
+
+        await tx.activityLog.create({
+          data: {
+            userId: dbUser?.id || null,
+            action: `BATCH_${action}`,
+            details: `Cập nhật trạng thái hàng loạt ${orderIds.length} đơn sang "${newStatus}"`,
+            ipAddress,
+          },
+        });
+
+        return { success: orderIds.length };
       }
 
-      await prisma.activityLog.create({
-        data: {
-          userId: dbUser?.id || null,
-          action: `BATCH_${action}`,
-          details: `Cập nhật ${successIds.length}/${orderIds.length} đơn sang "${newStatus}". Lỗi: ${errors.length}`,
-        },
-      });
+      // 2. Change Source Action
+      if (action === 'CHANGE_SOURCE') {
+        const { supplierSourceId } = payload || {};
+        if (!supplierSourceId) {
+          throw new Error('Thiếu thông tin nguồn hàng mới');
+        }
 
-      return NextResponse.json({
-        success: successIds.length,
-        failed: errors.length,
-        total: orderIds.length,
-        errors,
-      });
-    }
+        const source = await tx.supplierSource.findUnique({ where: { id: supplierSourceId } });
+        if (!source) {
+          throw new Error('Nguồn hàng mới không tồn tại');
+        }
 
-    // ==========================================
-    // CHANGE_SOURCE
-    // ==========================================
-    if (action === 'CHANGE_SOURCE') {
-      const { supplierSourceId } = payload || {};
-      if (!supplierSourceId) {
-        return NextResponse.json({ error: 'Thiếu thông tin nguồn hàng mới' }, { status: 400 });
-      }
+        const orders = await tx.order.findMany({
+          where: { id: { in: orderIds } },
+        });
 
-      const source = await prisma.supplierSource.findUnique({ where: { id: supplierSourceId } });
-      if (!source) {
-        return NextResponse.json({ error: 'Nguồn hàng không tồn tại' }, { status: 404 });
-      }
+        if (orders.length !== orderIds.length) {
+          throw new Error('Một số đơn hàng được chọn không tồn tại.');
+        }
 
-      const orders = await prisma.order.findMany({
-        where: { id: { in: orderIds } },
-        include: { customer: { select: { name: true } } },
-      });
+        for (const order of orders) {
+          const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
+          if (isLocked) {
+            throw new Error(`Đơn hàng ${order.orderCode} đã hoàn tất hoặc bị từ chối và đang bị khóa. Vui lòng mở khóa trước.`);
+          }
 
-      for (const order of orders) {
-        try {
-          await prisma.order.update({
+          await tx.order.update({
             where: { id: order.id },
             data: { supplierSourceId, supplierSourceName: source.name },
           });
-          successIds.push(order.id);
-        } catch (err: any) {
-          errors.push({
-            orderId: order.id,
-            orderCode: order.orderCode,
-            customerName: order.customer?.name || 'N/A',
-            reason: err.message || 'Lỗi đổi nguồn',
-            action,
+
+          await tx.activityLog.create({
+            data: {
+              userId: dbUser?.id || null,
+              action: 'UPDATE_ORDER_SOURCE',
+              target: `Order:${order.id}`,
+              details: `Thay đổi nguồn hàng hàng loạt sang "${source.name}"`,
+              ipAddress,
+            },
           });
         }
+
+        await tx.activityLog.create({
+          data: {
+            userId: dbUser?.id || null,
+            action: 'BATCH_CHANGE_SOURCE',
+            details: `Đổi nguồn sang "${source.name}" cho ${orderIds.length} đơn`,
+            ipAddress,
+          },
+        });
+
+        return { success: orderIds.length };
       }
 
-      await prisma.activityLog.create({
-        data: {
-          userId: dbUser?.id || null,
-          action: 'BATCH_CHANGE_SOURCE',
-          details: `Đổi nguồn sang "${source.name}" cho ${successIds.length}/${orderIds.length} đơn`,
-        },
-      });
+      // 3. Renew Action
+      if (action === 'RENEW') {
+        const { daysToExtend, additionalSalePrice, additionalCostPrice, note } = payload || {};
+        const parsedDays = parseInt(daysToExtend);
+        if (isNaN(parsedDays) || parsedDays < 1 || parsedDays > 365) {
+          throw new Error('Thời gian gia hạn phải từ 1 đến 365 ngày');
+        }
 
-      return NextResponse.json({ success: successIds.length, failed: errors.length, total: orderIds.length, errors });
-    }
+        const addSale = parseFloat(additionalSalePrice || 0);
+        const addCost = parseFloat(additionalCostPrice || 0);
+        if ((addSale !== 0 || addCost !== 0) && session.user.role !== 'ADMIN') {
+          throw new Error('Chỉ có Admin mới có quyền thay đổi giá bán, giá vốn đơn hàng');
+        }
 
-    // ==========================================
-    // RENEW — gia hạn hàng loạt
-    // ==========================================
-    if (action === 'RENEW') {
-      const { daysToExtend, additionalSalePrice, additionalCostPrice, note } = payload || {};
-      const parsedDays = parseInt(daysToExtend);
-      if (isNaN(parsedDays) || parsedDays < 1 || parsedDays > 365) {
-        return NextResponse.json({ error: 'Thời gian gia hạn phải từ 1 đến 365 ngày' }, { status: 400 });
-      }
+        const orders = await tx.order.findMany({
+          where: { id: { in: orderIds } },
+        });
 
-      const orders = await prisma.order.findMany({
-        where: { id: { in: orderIds } },
-        include: { customer: { select: { name: true } } },
-      });
+        if (orders.length !== orderIds.length) {
+          throw new Error('Một số đơn hàng được chọn không tồn tại.');
+        }
 
-      for (const order of orders) {
-        try {
+        for (const order of orders) {
+          const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
+          if (isLocked) {
+            throw new Error(`Đơn hàng ${order.orderCode} đã hoàn tất hoặc bị từ chối và đang bị khóa. Vui lòng mở khóa trước.`);
+          }
+
           const currentEnd = new Date(order.endDate);
           const newEnd = currentEnd > now
             ? new Date(currentEnd.getTime() + parsedDays * 24 * 60 * 60 * 1000)
             : new Date(now.getTime() + parsedDays * 24 * 60 * 60 * 1000);
 
-          const addSale = parseFloat(additionalSalePrice || 0);
-          const addCost = parseFloat(additionalCostPrice || 0);
           const newSalePrice = order.salePrice + addSale;
           const newCostPrice = order.costPrice + addCost;
 
-          await prisma.order.update({
+          await tx.order.update({
             where: { id: order.id },
             data: {
               endDate: newEnd,
@@ -186,125 +183,110 @@ export async function POST(request: Request) {
               note: note ? `${order.note || ''}\n[Gia hạn ${parsedDays} ngày]: ${note}`.trim() : order.note,
             },
           });
-          successIds.push(order.id);
-        } catch (err: any) {
-          errors.push({
-            orderId: order.id,
-            orderCode: order.orderCode,
-            customerName: order.customer?.name || 'N/A',
-            reason: err.message || 'Lỗi gia hạn',
-            action,
+
+          await tx.activityLog.create({
+            data: {
+              userId: dbUser?.id || null,
+              action: 'RENEW_ORDER',
+              target: `Order:${order.id}`,
+              details: `Gia hạn ${parsedDays} ngày. Giá bán mới: ${newSalePrice}, Giá vốn mới: ${newCostPrice}`,
+              ipAddress,
+            },
           });
         }
+
+        await tx.activityLog.create({
+          data: {
+            userId: dbUser?.id || null,
+            action: 'BATCH_RENEW',
+            details: `Gia hạn hàng loạt ${parsedDays} ngày cho ${orderIds.length} đơn`,
+            ipAddress,
+          },
+        });
+
+        return { success: orderIds.length };
       }
 
-      await prisma.activityLog.create({
-        data: {
-          userId: dbUser?.id || null,
-          action: 'BATCH_RENEW',
-          details: `Gia hạn ${parsedDays} ngày cho ${successIds.length}/${orderIds.length} đơn`,
-        },
-      });
+      // 4. Payment Batch Action
+      if (action === 'PAYMENT_BATCH') {
+        const { method, note: payNote } = payload || {};
 
-      return NextResponse.json({ success: successIds.length, failed: errors.length, total: orderIds.length, errors });
-    }
+        const orders = await tx.order.findMany({
+          where: {
+            id: { in: orderIds },
+            paymentStatus: { in: ['UNPAID', 'OVERDUE'] },
+          },
+          include: { customer: { select: { id: true, name: true } } },
+        });
 
-    // ==========================================
-    // PAYMENT_BATCH — thanh toán hàng loạt
-    // ==========================================
-    if (action === 'PAYMENT_BATCH') {
-      const { method, note: payNote } = payload || {};
+        if (orders.length !== orderIds.length) {
+          throw new Error('Một số đơn hàng được chọn không tồn tại hoặc đã được thanh toán trước đó.');
+        }
 
-      // Fetch all orders — validate customer ownership by ID
-      const orders = await prisma.order.findMany({
-        where: {
-          id: { in: orderIds },
-          paymentStatus: { in: ['UNPAID', 'OVERDUE'] },
-        },
-        include: { customer: { select: { id: true, name: true } } },
-      });
-
-      for (const order of orders) {
-        try {
+        for (const order of orders) {
           const remaining = order.salePrice - order.paidAmount;
           if (remaining <= 0) {
-            errors.push({
-              orderId: order.id,
-              orderCode: order.orderCode,
-              customerName: order.customer?.name || 'N/A',
-              reason: 'Đơn đã thanh toán đủ',
-              action,
-            });
-            continue;
+            throw new Error(`Đơn hàng ${order.orderCode} đã được thanh toán đủ.`);
           }
 
-          await prisma.$transaction(async (tx: any) => {
-            await tx.order.update({
-              where: { id: order.id }, // Use ID always
-              data: { paymentStatus: 'PAID', paidAmount: order.salePrice, paidAt: now },
-            });
-            await tx.paymentRecord.create({
-              data: {
-                customerId: order.customer.id, // Use customer ID not index
-                orderId: order.id,
-                amount: remaining,
-                method: method || 'bank',
-                note: payNote || 'Thanh toán hàng loạt',
-                paidAt: now,
-              },
-            });
+          await tx.order.update({
+            where: { id: order.id },
+            data: { paymentStatus: 'PAID', paidAmount: order.salePrice, paidAt: now },
           });
-          successIds.push(order.id);
-        } catch (err: any) {
-          errors.push({
-            orderId: order.id,
-            orderCode: order.orderCode,
-            customerName: order.customer?.name || 'N/A',
-            reason: err.message || 'Lỗi thanh toán',
-            action,
+
+          await tx.paymentRecord.create({
+            data: {
+              customerId: order.customer.id,
+              orderId: order.id,
+              amount: remaining,
+              method: method || 'bank',
+              note: payNote || 'Thanh toán hàng loạt',
+              paidAt: now,
+            },
+          });
+
+          await tx.activityLog.create({
+            data: {
+              userId: dbUser?.id || null,
+              action: 'PAY_ORDER',
+              target: `Order:${order.id}`,
+              details: `Thanh toán số tiền còn thiếu ${remaining}đ bằng ${method || 'bank'}`,
+              ipAddress,
+            },
           });
         }
+
+        await tx.activityLog.create({
+          data: {
+            userId: dbUser?.id || null,
+            action: 'BATCH_PAYMENT',
+            details: `Thanh toán hàng loạt cho ${orderIds.length} đơn`,
+            ipAddress,
+          },
+        });
+
+        return { success: orderIds.length };
       }
 
-      await prisma.activityLog.create({
-        data: {
-          userId: dbUser?.id || null,
-          action: 'BATCH_PAYMENT',
-          details: `Thanh toán ${successIds.length}/${orderIds.length} đơn`,
-        },
-      });
+      // 5. Confirm Source Refund Action
+      if (action === 'CONFIRM_SOURCE_REFUND') {
+        const { sourceRefundActual, sourceStatus: newSourceStatus } = payload || {};
 
-      return NextResponse.json({ success: successIds.length, failed: errors.length, total: orderIds.length, errors });
-    }
+        const orders = await tx.order.findMany({
+          where: { id: { in: orderIds } },
+          include: {
+            refundHistories: { orderBy: { createdAt: 'desc' }, take: 1 },
+          },
+        });
 
+        if (orders.length !== orderIds.length) {
+          throw new Error('Một số đơn hàng được chọn không tồn tại.');
+        }
 
-
-    // ==========================================
-    // CONFIRM_SOURCE_REFUND — xác nhận nguồn hoàn
-    // ==========================================
-    if (action === 'CONFIRM_SOURCE_REFUND') {
-      const { sourceRefundActual, sourceStatus: newSourceStatus } = payload || {};
-
-      const orders = await prisma.order.findMany({
-        where: { id: { in: orderIds } },
-        include: {
-          customer: { select: { name: true } },
-          refundHistories: { orderBy: { createdAt: 'desc' }, take: 1 },
-        },
-      });
-
-      for (const order of orders) {
-        try {
+        for (const order of orders) {
           const latestRefund = order.refundHistories[0];
           if (!latestRefund) {
-            errors.push({
-              orderId: order.id,
-              orderCode: order.orderCode,
-              customerName: order.customer?.name || 'N/A',
-              reason: 'Chưa tạo yêu cầu hoàn tiền cho đơn hàng này. Vui lòng tạo yêu cầu hoàn tiền trước.',
-              action,
-            });
-            continue;
+            throw new Error(`Đơn hàng ${order.orderCode} chưa có yêu cầu bảo hành/hoàn tiền.`);
           }
 
           const status = newSourceStatus || 'REFUNDED';
@@ -313,176 +295,153 @@ export async function POST(request: Request) {
             actualAmount = sourceRefundActual !== undefined && sourceRefundActual !== ''
               ? parseFloat(sourceRefundActual)
               : latestRefund.sourceRefundExpected;
-          } else {
-            actualAmount = 0;
           }
 
           const netProfit = order.salePrice - order.costPrice - latestRefund.amount + actualAmount;
 
-          let targetOrderStatus = 'WARRANTY_PENDING_SOURCE';
+          let targetOrderStatus = 'WAIT_SOURCE';
           if (status === 'REFUNDED') {
-            targetOrderStatus = 'WARRANTY_PENDING_REFUND';
+            targetOrderStatus = 'WAIT_CUSTOMER_REFUND';
           } else if (status === 'REJECTED') {
-            targetOrderStatus = 'WARRANTY_REJECTED';
-          } else if (status === 'PENDING') {
-            targetOrderStatus = 'WARRANTY_PENDING_SOURCE';
+            targetOrderStatus = 'SOURCE_REJECTED';
           }
 
-          await prisma.$transaction(async (tx: any) => {
-            await tx.refundHistory.update({
-              where: { id: latestRefund.id },
-              data: {
-                sourceRefundActual: actualAmount,
-                sourceStatus: status,
-                netProfitAfterRefund: netProfit,
-              },
-            });
-
-            await tx.order.update({
-              where: { id: order.id },
-              data: {
-                status: targetOrderStatus,
-                profit: netProfit,
-              },
-            });
+          await tx.refundHistory.update({
+            where: { id: latestRefund.id },
+            data: {
+              sourceRefundActual: actualAmount,
+              sourceStatus: status,
+              netProfitAfterRefund: netProfit,
+            },
           });
 
-          successIds.push(order.id);
-        } catch (err: any) {
-          errors.push({
-            orderId: order.id,
-            orderCode: order.orderCode,
-            customerName: order.customer?.name || 'N/A',
-            reason: err.message || 'Lỗi cập nhật nguồn hoàn',
-            action,
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              status: targetOrderStatus,
+              profit: netProfit,
+            },
+          });
+
+          await tx.activityLog.create({
+            data: {
+              userId: dbUser?.id || null,
+              action: 'CONFIRM_SOURCE_REFUND',
+              target: `Order:${order.id}`,
+              details: `Xác nhận nguồn hoàn: ${status}. Số tiền: ${actualAmount}đ. Trạng thái đơn mới: ${targetOrderStatus}`,
+              ipAddress,
+            },
           });
         }
+
+        await tx.activityLog.create({
+          data: {
+            userId: dbUser?.id || null,
+            action: 'BATCH_CONFIRM_SOURCE_REFUND',
+            details: `Xác nhận nguồn hoàn hàng loạt cho ${orderIds.length} đơn`,
+            ipAddress,
+          },
+        });
+
+        return { success: orderIds.length };
       }
 
-      await prisma.activityLog.create({
-        data: {
-          userId: dbUser?.id || null,
-          action: 'BATCH_CONFIRM_SOURCE_REFUND',
-          details: `Xác nhận nguồn hoàn cho ${successIds.length}/${orderIds.length} đơn`,
-        },
-      });
+      // 6. Bulk Refund Action (BATCH_REFUND)
+      if (action === 'BATCH_REFUND') {
+        if (session.user.role !== 'ADMIN') {
+          throw new Error('Chỉ có Admin mới có quyền thực hiện hoàn tiền hàng loạt');
+        }
+        const { errorDate, reason } = payload || {};
+        const faultDate = errorDate ? new Date(errorDate) : new Date();
+        const operatorName = dbUser?.name || 'Hệ thống';
 
-      return NextResponse.json({ success: successIds.length, failed: errors.length, total: orderIds.length, errors });
-    }
+        const orders = await tx.order.findMany({
+          where: { id: { in: orderIds } },
+        });
 
-    // ==========================================
-    // BATCH_REFUND — Hoàn tiền hàng loạt (Bulk Refund with Queue/Batch style chunking)
-    // ==========================================
-    if (action === 'BATCH_REFUND') {
-      const { errorDate, reason } = payload || {};
-      const faultDate = errorDate ? new Date(errorDate) : new Date();
-      const operatorName = dbUser?.name || 'Hệ thống';
+        if (orders.length !== orderIds.length) {
+          throw new Error('Một số đơn hàng được chọn không tồn tại.');
+        }
 
-      // Split orderIds into chunks of 50 to prevent SQLite write-locking
-      const chunkSize = 50;
-      for (let i = 0; i < orderIds.length; i += chunkSize) {
-        const chunk = orderIds.slice(i, i + chunkSize);
+        for (const order of orders) {
+          if (order.status === 'COMPLETED') {
+            throw new Error(`Đơn hàng ${order.orderCode} đã hoàn tất bảo hành/hoàn tiền trước đó.`);
+          }
 
-        await prisma.$transaction(async (tx: any) => {
-          const orders = await tx.order.findMany({
-            where: { id: { in: chunk } },
-            include: { refundHistories: true },
+          const start = new Date(order.startDate);
+          const totalDays = order.durationDays || 30;
+          const diffTime = faultDate.getTime() - start.getTime();
+          let daysUsed = Math.floor(diffTime / (24 * 60 * 60 * 1000));
+          if (daysUsed < 0) daysUsed = 0;
+          if (daysUsed > totalDays) daysUsed = totalDays;
+
+          const daysRemaining = totalDays - daysUsed;
+          const costPerDay = order.salePrice / totalDays;
+          const refundAmount = Math.round(daysRemaining * costPerDay);
+
+          const supplierCostPerDay = order.costPrice / totalDays;
+          const sourceRefundExpected = Math.round(daysRemaining * supplierCostPerDay);
+          
+          const profitAfterRefund = order.salePrice - order.costPrice - refundAmount + sourceRefundExpected;
+
+          await tx.refundHistory.create({
+            data: {
+              orderId: order.id,
+              amount: refundAmount,
+              autoRefundAmount: refundAmount,
+              daysUsed,
+              daysRemaining,
+              costPerDay,
+              errorDate: faultDate,
+              operatorName,
+              note: reason || 'Hoàn tiền hàng loạt',
+              sourceAmount: sourceRefundExpected,
+              sourceRefundExpected,
+              sourceRefundActual: sourceRefundExpected,
+              sourceStatus: 'REFUNDED',
+              netProfitAfterRefund: profitAfterRefund,
+            },
           });
 
-          for (const order of orders) {
-            try {
-              if (order.status === 'REFUNDED' || order.status === 'WARRANTY_DONE') {
-                errors.push({
-                  orderId: order.id,
-                  orderCode: order.orderCode,
-                  customerName: 'N/A',
-                  reason: 'Đơn hàng đã được hoàn tiền trước đó',
-                  action,
-                });
-                continue;
-              }
+          const noteAppend = reason ? `\n[Hoàn tiền hàng loạt]: ${reason}` : '';
+          await tx.order.update({
+            where: { id: order.id },
+            data: {
+              status: 'COMPLETED',
+              profit: profitAfterRefund,
+              note: `${order.note || ''}${noteAppend}`.trim(),
+            },
+          });
 
-              const start = new Date(order.startDate);
-              const totalDays = order.durationDays || 30;
-              const diffTime = faultDate.getTime() - start.getTime();
-              let daysUsed = Math.floor(diffTime / (24 * 60 * 60 * 1000));
-              if (daysUsed < 0) daysUsed = 0;
-              if (daysUsed > totalDays) daysUsed = totalDays;
+          await tx.activityLog.create({
+            data: {
+              userId: dbUser?.id || null,
+              action: 'REFUND_ORDER',
+              target: `Order:${order.id}`,
+              details: `Hoàn khách: ${refundAmount}đ, Nguồn hoàn: ${sourceRefundExpected}đ. Trạng thái: COMPLETED`,
+              ipAddress,
+            },
+          });
+        }
 
-              const daysRemaining = totalDays - daysUsed;
-              const costPerDay = order.salePrice / totalDays;
-              const refundAmount = Math.round(daysRemaining * costPerDay);
-
-              const supplierCostPerDay = order.costPrice / totalDays;
-              const sourceRefundExpected = Math.round(daysRemaining * supplierCostPerDay);
-              
-              // Profit after refund calculation
-              const profitAfterRefund = order.salePrice - order.costPrice - refundAmount + sourceRefundExpected;
-
-              // Create refund history record
-              await tx.refundHistory.create({
-                data: {
-                  orderId: order.id,
-                  amount: refundAmount,
-                  autoRefundAmount: refundAmount,
-                  daysUsed,
-                  daysRemaining,
-                  costPerDay,
-                  errorDate: faultDate,
-                  operatorName,
-                  note: reason || 'Hoàn tiền hàng loạt',
-                  sourceAmount: sourceRefundExpected,
-                  sourceRefundExpected,
-                  sourceRefundActual: sourceRefundExpected,
-                  sourceStatus: 'REFUNDED', // Set sourceStatus to REFUNDED as expected source refund is confirmed
-                  netProfitAfterRefund: profitAfterRefund,
-                },
-              });
-
-              // Update order status, profit, and notes
-              const noteAppend = reason ? `\n[Hoàn tiền hàng loạt]: ${reason}` : '';
-              await tx.order.update({
-                where: { id: order.id },
-                data: {
-                  status: 'WARRANTY_DONE',
-                  profit: profitAfterRefund,
-                  note: `${order.note || ''}${noteAppend}`.trim(),
-                },
-              });
-
-              successIds.push(order.id);
-            } catch (err: any) {
-              errors.push({
-                orderId: order.id,
-                orderCode: order.orderCode,
-                customerName: 'N/A',
-                reason: err.message || 'Lỗi xử lý hoàn tiền đơn hàng',
-                action,
-              });
-            }
-          }
+        await tx.activityLog.create({
+          data: {
+            userId: dbUser?.id || null,
+            action: 'BATCH_REFUND',
+            details: `Hoàn tiền hàng loạt thành công cho ${orderIds.length} đơn`,
+            ipAddress,
+          },
         });
+
+        return { success: orderIds.length };
       }
 
-      await prisma.activityLog.create({
-        data: {
-          userId: dbUser?.id || null,
-          action: 'BATCH_REFUND',
-          details: `Hoàn tiền hàng loạt thành công cho ${successIds.length}/${orderIds.length} đơn. Thất bại: ${errors.length}`,
-        },
-      });
+      throw new Error('Hành động không được hỗ trợ');
+    });
 
-      return NextResponse.json({
-        success: successIds.length,
-        failed: errors.length,
-        total: orderIds.length,
-        errors,
-      });
-    }
-
-    return NextResponse.json({ error: 'Hành động không được hỗ trợ' }, { status: 400 });
+    return NextResponse.json({ success: result.success, failed: 0, total: orderIds.length });
   } catch (error: any) {
-    console.error('Batch orders API error:', error);
-    return NextResponse.json({ error: error.message || 'Đã xảy ra lỗi' }, { status: 500 });
+    console.error('Batch orders transaction error:', error);
+    return NextResponse.json({ error: error.message || 'Đã xảy ra lỗi khi thực hiện thao tác hàng loạt' }, { status: 400 });
   }
 }

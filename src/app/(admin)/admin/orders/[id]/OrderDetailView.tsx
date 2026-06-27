@@ -33,6 +33,7 @@ import {
   History,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useSession } from 'next-auth/react';
 import { formatCurrency, formatDate, getStatusLabel, getStatusColor, getPaymentStatusLabel, getPaymentStatusColor } from '@/lib/utils';
 
 interface Customer {
@@ -122,6 +123,8 @@ interface OrderRow {
   createdAt: string | Date;
   updatedAt: string | Date;
   refundHistories: RefundHistory[];
+  isUnlocked?: boolean;
+  unlockReason?: string | null;
 }
 
 interface OrderDetailViewProps {
@@ -140,7 +143,10 @@ export default function OrderDetailView({
   activityLogs,
 }: OrderDetailViewProps) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const isAdmin = session?.user?.role === 'ADMIN';
   const [showPassword, setShowPassword] = useState(false);
+  const [openPaymentMenu, setOpenPaymentMenu] = useState(false);
 
   const clickTimeoutRef = useRef<any>(null);
   const handleEmailClick = (e: React.MouseEvent, email: string, password?: string) => {
@@ -192,6 +198,37 @@ export default function OrderDetailView({
   const [warrantyModalOpen, setWarrantyModalOpen] = useState(false);
   const [resolveModalOpen, setResolveModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [unlockModalOpen, setUnlockModalOpen] = useState(false);
+  const [unlockReason, setUnlockReason] = useState('');
+
+  const handleUnlockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!unlockReason.trim()) {
+      toast.error('Vui lòng nhập lý do mở khóa');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/orders/${order.id}/unlock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: unlockReason }),
+      });
+      if (res.ok) {
+        toast.success('Mở khóa đơn hàng thành công!');
+        setUnlockModalOpen(false);
+        setUnlockReason('');
+        router.refresh();
+      } else {
+        const err = await res.json();
+        toast.error(err.error || 'Mở khóa thất bại');
+      }
+    } catch {
+      toast.error('Lỗi kết nối máy chủ');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Edit form state
   const [editServiceId, setEditServiceId] = useState(order.serviceId);
@@ -283,23 +320,72 @@ export default function OrderDetailView({
 
   // #49 - Timeline
   const timelineSteps = useMemo(() => {
-    const latestRefund = order.refundHistories?.[0];
-    const steps = [
-      { label: 'Tạo đơn', date: order.createdAt, icon: '🎉', done: true },
-      { label: 'Thanh toán', date: order.paymentStatus === 'PAID' ? order.paidAt : null, icon: '💳', done: order.paymentStatus === 'PAID' },
-      { label: 'Đang sử dụng', date: order.startDate, icon: '🟢', done: true },
-      { label: 'Báo lỗi', date: latestRefund?.errorDate, icon: '🔵', done: ['WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND', 'WARRANTY_DONE', 'WARRANTY_REJECTED'].includes(order.status) },
-      { label: 'Chờ nguồn', date: null, icon: '🟣', done: ['WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND', 'WARRANTY_DONE', 'WARRANTY_REJECTED'].includes(order.status) },
-      { label: 'Nguồn hoàn', date: null, icon: '✅', done: ['WARRANTY_PENDING_REFUND', 'WARRANTY_DONE'].includes(order.status) },
-      { label: 'Hoàn khách', date: latestRefund?.createdAt, icon: '💸', done: order.status === 'WARRANTY_DONE' },
-      { label: 'Hoàn tất', date: null, icon: '🏁', done: order.status === 'WARRANTY_DONE' },
+    const statusOrder = ['ACTIVE', 'EXPIRING', 'EXPIRED', 'REPORTED', 'WAIT_SOURCE', 'WAIT_CUSTOMER_REFUND', 'COMPLETED', 'SOURCE_REJECTED'];
+    const currentIdx = statusOrder.indexOf(order.status);
+    
+    // Helper to check if step is done or active
+    const isDone = (targetStatus: string) => {
+      const targetIdx = statusOrder.indexOf(targetStatus);
+      if (order.status === 'SOURCE_REJECTED' && targetStatus === 'COMPLETED') return false;
+      if (order.status === 'COMPLETED' && targetStatus === 'SOURCE_REJECTED') return false;
+      return currentIdx >= targetIdx;
+    };
+
+    const isActive = (targetStatus: string) => {
+      return order.status === targetStatus;
+    };
+
+    return [
+      {
+        label: 'Đang sử dụng',
+        icon: '🟢',
+        done: isDone('ACTIVE'),
+        active: isActive('ACTIVE'),
+        date: order.startDate,
+      },
+      {
+        label: 'Sắp hết hạn',
+        icon: '🟡',
+        done: isDone('EXPIRING'),
+        active: isActive('EXPIRING'),
+        date: null,
+      },
+      {
+        label: 'Hết hạn',
+        icon: '🔴',
+        done: isDone('EXPIRED'),
+        active: isActive('EXPIRED'),
+        date: order.endDate,
+      },
+      {
+        label: 'Khách báo lỗi',
+        icon: '🚨',
+        done: isDone('REPORTED'),
+        active: isActive('REPORTED'),
+        date: order.refundHistories?.[0]?.errorDate || null,
+      },
+      {
+        label: 'Chờ nguồn',
+        icon: '⏳',
+        done: isDone('WAIT_SOURCE'),
+        active: isActive('WAIT_SOURCE'),
+        date: null,
+      },
+      {
+        label: 'Chờ hoàn khách',
+        icon: '🟣',
+        done: isDone('WAIT_CUSTOMER_REFUND'),
+        active: isActive('WAIT_CUSTOMER_REFUND'),
+        date: null,
+      },
+      {
+        label: order.status === 'SOURCE_REJECTED' ? 'Từ chối hoàn' : 'Hoàn tất',
+        icon: order.status === 'SOURCE_REJECTED' ? '⛔' : '✅',
+        done: order.status === 'COMPLETED' || order.status === 'SOURCE_REJECTED',
+        active: order.status === 'COMPLETED' || order.status === 'SOURCE_REJECTED',
+        date: (order.status === 'COMPLETED' || order.status === 'SOURCE_REJECTED') ? order.updatedAt : null,
+      },
     ];
-    if (order.status === 'WARRANTY_REJECTED') {
-      steps[5] = { label: 'Nguồn từ chối', date: null, icon: '⛔', done: true };
-      steps[6] = { label: 'Từ chối BH', date: null, icon: '❌', done: true };
-      steps[7] = { label: '—', date: null, icon: '—', done: false };
-    }
-    return steps;
   }, [order]);
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -519,8 +605,45 @@ export default function OrderDetailView({
     }
   };
 
+  const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
+
   return (
     <div className="space-y-6 animate-fade-in text-white">
+      {/* Warning Banners */}
+      {isLocked && (
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-rose-300">
+          <div className="flex items-start gap-2.5">
+            <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide">Đơn hàng đang bị khóa</p>
+              <p className="text-[11px] text-rose-400/80 mt-0.5">
+                Đơn hàng đã ở trạng thái hoàn tất hoặc bị từ chối và đang bị khóa. Bạn không thể chỉnh sửa, gia hạn, báo lỗi, hoặc hoàn tiền trừ khi được Admin mở khóa.
+              </p>
+            </div>
+          </div>
+          {isAdmin && (
+            <button
+              onClick={() => setUnlockModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all cursor-pointer"
+            >
+              🔓 Mở khóa đơn
+            </button>
+          )}
+        </div>
+      )}
+
+      {order.isUnlocked && ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && (
+        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-start gap-2.5 text-emerald-300">
+          <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide">Đơn hàng đã được mở khóa</p>
+            <p className="text-[11px] text-emerald-400/80 mt-0.5">
+              Lý do mở khóa: {order.unlockReason || 'Không có lý do'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -561,25 +684,29 @@ export default function OrderDetailView({
 
         {/* Top actions */}
         <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => setEditModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-300 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all cursor-pointer"
-          >
-            <Edit className="w-4 h-4" />
-            Sửa đơn
-          </button>
+          {!isLocked && (
+            <button
+              onClick={() => setEditModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-300 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all cursor-pointer"
+            >
+              <Edit className="w-4 h-4" />
+              Sửa đơn
+            </button>
+          )}
 
-          <button
-            onClick={handleDeleteOrder}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl border border-rose-500/20 transition-all cursor-pointer"
-          >
-            <Trash2 className="w-4 h-4" />
-            Xóa đơn
-          </button>
+          {!isLocked && (
+            <button
+              onClick={handleDeleteOrder}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl border border-rose-500/20 transition-all cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+              Xóa đơn
+            </button>
+          )}
 
           {/* Warranty statuses linking to full warranty page */}
-          {['WARRANTY', 'WARRANTY_PENDING_SOURCE', 'WARRANTY_PENDING_REFUND', 'WARRANTY_DONE', 'WARRANTY_REJECTED'].includes(order.status) && (
+          {['REPORTED', 'WAIT_SOURCE', 'WAIT_CUSTOMER_REFUND', 'COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && (
             <Link
               href={`/admin/warranty/${order.id}`}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl transition-all cursor-pointer"
@@ -590,7 +717,7 @@ export default function OrderDetailView({
           )}
 
           {/* Report error button */}
-          {['ACTIVE', 'EXPIRING_SOON', 'EXPIRED'].includes(order.status) && (
+          {!isLocked && ['ACTIVE', 'EXPIRING', 'EXPIRED'].includes(order.status) && (
             <button
               onClick={() => setWarrantyModalOpen(true)}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-all cursor-pointer"
@@ -601,7 +728,7 @@ export default function OrderDetailView({
           )}
 
           {/* Extend button */}
-          {['ACTIVE', 'EXPIRING_SOON', 'EXPIRED'].includes(order.status) && (
+          {!isLocked && ['ACTIVE', 'EXPIRING', 'EXPIRED'].includes(order.status) && (
             <button
               onClick={() => setRenewModalOpen(true)}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all cursor-pointer"
@@ -751,7 +878,8 @@ export default function OrderDetailView({
               6. Thông tin thời hạn & Chu kỳ sử dụng
             </h3>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {/* Row 1 */}
               <div className="p-3.5 rounded-xl bg-white/2 border border-white/5 text-center">
                 <span className="text-[10px] text-slate-500 uppercase block font-semibold">Ngày bắt đầu</span>
                 <strong className="text-xs text-white block mt-1">{formatDate(order.startDate)}</strong>
@@ -768,17 +896,23 @@ export default function OrderDetailView({
                 <span className="text-[10px] text-slate-500 uppercase block font-semibold">Còn lại</span>
                 <strong className="text-sm font-bold text-indigo-300 block mt-1">{daysRemaining} ngày</strong>
               </div>
+
+              {/* Row 2 */}
               <div className="p-3.5 rounded-xl bg-white/2 border border-white/5 text-center">
-                <span className="text-[10px] text-slate-500 uppercase block font-semibold">Đơn giá ngày</span>
+                <span className="text-[10px] text-slate-500 uppercase block font-semibold">Đơn giá/ngày</span>
                 <strong className="text-sm font-bold text-amber-400 block mt-1">{formatCurrency(order.salePrice / totalDays)}/ngày</strong>
-              </div>
-              <div className="p-3.5 rounded-xl bg-white/2 border border-white/5 text-center">
-                <span className="text-[10px] text-slate-500 uppercase block font-semibold">Giá trị đã dùng</span>
-                <strong className="text-sm font-bold text-amber-550 block mt-1">{formatCurrency(Math.round(daysUsed * (order.salePrice / totalDays)))}</strong>
               </div>
               <div className="p-3.5 rounded-xl bg-white/2 border border-white/5 text-center">
                 <span className="text-[10px] text-slate-500 uppercase block font-semibold">Giá trị còn lại</span>
                 <strong className="text-sm font-bold text-emerald-400 block mt-1">{formatCurrency(Math.round(daysRemaining * (order.salePrice / totalDays)))}</strong>
+              </div>
+              <div className="p-3.5 rounded-xl bg-white/2 border border-white/5 text-center">
+                <span className="text-[10px] text-slate-500 uppercase block font-semibold">Thời gian còn lại</span>
+                <strong className="text-sm font-bold text-indigo-300 block mt-1">{daysRemaining} ngày</strong>
+              </div>
+              <div className="p-3.5 rounded-xl bg-white/2 border border-white/5 text-center">
+                <span className="text-[10px] text-slate-500 uppercase block font-semibold">Chu kỳ sử dụng</span>
+                <strong className="text-sm font-bold text-white block mt-1">{totalDays} ngày</strong>
               </div>
             </div>
           </div>
@@ -958,24 +1092,58 @@ export default function OrderDetailView({
             <div className="space-y-3 font-mono">
               <div className="flex justify-between items-center pb-2 border-b border-white/5">
                 <span className="text-slate-500">Trạng thái:</span>
-                <select
-                  value={order.paymentStatus}
-                  onChange={async (e) => {
-                    const newStatus = e.target.value;
-                    await handleUpdatePaymentStatus(newStatus);
-                  }}
-                  className={`px-2 py-1 text-[10px] font-bold rounded-lg border bg-[#0f1320] focus:outline-none cursor-pointer ${
-                    order.paymentStatus === 'PAID'
-                      ? 'text-emerald-400 border-emerald-500/30'
-                      : order.paymentStatus === 'OVERDUE'
-                      ? 'text-rose-400 border-rose-500/30'
-                      : 'text-amber-400 border-amber-500/30'
-                  }`}
-                >
-                  <option value="UNPAID" className="text-amber-400">🟡 Chưa thanh toán</option>
-                  <option value="PAID" className="text-emerald-400">🟢 Đã thanh toán</option>
-                  <option value="OVERDUE" className="text-rose-400">🔴 Quá hạn</option>
-                </select>
+                <div className="relative">
+                  <button
+                    onClick={() => setOpenPaymentMenu(!openPaymentMenu)}
+                    className={`status-badge border text-[11px] cursor-pointer flex items-center justify-between gap-1 min-w-[140px] px-2.5 py-1 ${
+                      order.paymentStatus === 'PAID'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                        : order.paymentStatus === 'OVERDUE'
+                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                        : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                    }`}
+                  >
+                    <span>
+                      {order.paymentStatus === 'PAID' ? '🟢 Đã thanh toán' : order.paymentStatus === 'OVERDUE' ? '🔴 Quá hạn' : '🟡 Chưa thanh toán'}
+                    </span>
+                    <span className="text-[8px] opacity-60">▼</span>
+                  </button>
+
+                  {openPaymentMenu && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setOpenPaymentMenu(false)} />
+                      <div className="absolute top-8 right-0 bg-[#161b26] border border-white/10 rounded-lg shadow-xl py-1 z-20 font-sans min-w-[145px]">
+                        <button
+                          onClick={async () => {
+                            setOpenPaymentMenu(false);
+                            await handleUpdatePaymentStatus('UNPAID');
+                          }}
+                          className="w-full text-left px-3 py-1.5 text-xs text-amber-400 hover:bg-white/5 font-semibold flex items-center gap-1.5"
+                        >
+                          🟡 Chưa thanh toán
+                        </button>
+                        <button
+                          onClick={async () => {
+                            setOpenPaymentMenu(false);
+                            await handleUpdatePaymentStatus('PAID');
+                          }}
+                          className="w-full text-left px-3 py-1.5 text-xs text-emerald-400 hover:bg-white/5 font-semibold flex items-center gap-1.5"
+                        >
+                          🟢 Đã thanh toán
+                        </button>
+                        <button
+                          onClick={async () => {
+                            setOpenPaymentMenu(false);
+                            await handleUpdatePaymentStatus('OVERDUE');
+                          }}
+                          className="w-full text-left px-3 py-1.5 text-xs text-rose-400 hover:bg-white/5 font-semibold flex items-center gap-1.5"
+                        >
+                          🔴 Quá hạn
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
               <div className="flex justify-between items-center pb-2 border-b border-white/5">
                 <span className="text-slate-500">Đã thanh toán:</span>
@@ -1004,7 +1172,7 @@ export default function OrderDetailView({
                   href={`/admin/debts/${order.customerId}`}
                   className="block w-full py-2 text-center text-xs text-indigo-400 hover:text-white bg-indigo-500/10 hover:bg-indigo-500/20 rounded-xl border border-indigo-500/20 transition-all font-bold"
                 >
-                  💳 Đi tới Quản lý Công nợ khách
+                  💳 Đi tới Quản lý Khách còn nợ
                 </Link>
               </div>
             )}
@@ -1150,11 +1318,11 @@ export default function OrderDetailView({
                 </div>
                 <div>
                   <label className="block text-slate-400 mb-1 font-semibold">Giá bán (₫)</label>
-                  <input type="number" value={editSalePrice} onChange={(e) => setEditSalePrice(e.target.value)} required className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white" />
+                  <input type="number" value={editSalePrice} onChange={(e) => setEditSalePrice(e.target.value)} required disabled={!isAdmin} className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white disabled:opacity-50 disabled:cursor-not-allowed" />
                 </div>
                 <div>
                   <label className="block text-slate-400 mb-1 font-semibold">Giá vốn (₫)</label>
-                  <input type="number" value={editCostPrice} onChange={(e) => setEditCostPrice(e.target.value)} required className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white" />
+                  <input type="number" value={editCostPrice} onChange={(e) => setEditCostPrice(e.target.value)} required disabled={!isAdmin} className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white disabled:opacity-50 disabled:cursor-not-allowed" />
                 </div>
               </div>
 
@@ -1550,10 +1718,42 @@ export default function OrderDetailView({
               </div>
 
               <div className="flex gap-3 pt-3 border-t border-white/5">
-                <button type="button" onClick={() => setResolveModalOpen(false)} className="flex-1 py-2 rounded-xl text-sm font-semibold text-slate-400 border border-white/5 hover:bg-white/5 font-semibold text-center font-semibold text-center">Hủy</button>
+                <button type="button" onClick={() => setResolveModalOpen(false)} className="flex-1 py-2 rounded-xl text-sm font-semibold text-slate-400 border border-white/5 hover:bg-white/5 font-semibold text-center">Hủy</button>
                 <button type="submit" disabled={loading} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500">
                   {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                   Xác nhận xử lý xong
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* UNLOCK MODAL */}
+      {unlockModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="relative w-full max-w-md p-6 rounded-2xl bg-[#131722] border border-white/10 shadow-2xl animate-fade-in text-xs text-white">
+            <button onClick={() => setUnlockModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X className="w-4 h-4" /></button>
+            <h2 className="text-base font-bold text-white mb-4">Mở khóa đơn hàng {order.orderCode}</h2>
+
+            <form onSubmit={handleUnlockSubmit} className="space-y-4">
+              <div>
+                <label className="block text-slate-400 mb-1 font-semibold">Lý do mở khóa *</label>
+                <textarea
+                  value={unlockReason}
+                  onChange={(e) => setUnlockReason(e.target.value)}
+                  placeholder="Nhập lý do mở khóa đơn hàng..."
+                  required
+                  rows={3}
+                  className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 text-white focus:outline-none focus:border-indigo-500 resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-3 border-t border-white/5">
+                <button type="button" onClick={() => setUnlockModalOpen(false)} className="flex-1 py-2 rounded-xl text-sm font-semibold text-slate-400 border border-white/5 hover:bg-white/5 font-semibold text-center">Hủy</button>
+                <button type="submit" disabled={loading} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500">
+                  {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Xác nhận mở khóa
                 </button>
               </div>
             </form>

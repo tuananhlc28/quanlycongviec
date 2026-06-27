@@ -67,10 +67,10 @@ export default function AdminSidebar() {
 
   const menuItems = [
     { href: '/admin/dashboard',     label: '📊 Tổng quan',        icon: BarChart3 },
-    { href: '/admin/reports',       label: '📈 Biểu đồ thống kê', icon: TrendingUp },
+    { href: '/admin/reports',       label: '📈 Báo cáo hoàn tiền', icon: TrendingUp },
     { href: '/admin/customers',     label: '👥 Khách hàng',       icon: Users },
     { href: '/admin/orders',        label: '🛒 Đơn hàng',         icon: ShoppingCart },
-    { href: '/admin/warranty',      label: '🛡️ Bảo hành',         icon: ShieldAlert },
+    { href: '/admin/warranty',      label: '🛡️ Xử lý sau bán',    icon: ShieldAlert },
     { href: '/admin/debts',         label: '💳 Công nợ',          icon: Wallet, badge: overdueCount },
     { href: '/admin/services',      label: '🛍️ Dịch vụ',          icon: Key },
     { href: '/admin/sources',       label: '📦 Nguồn hàng',       icon: Plug },
@@ -80,7 +80,7 @@ export default function AdminSidebar() {
       icon: RotateCcw,
       badge: expiringCount,
     },
-    { href: '/admin/refunds',       label: '💸 Tài chính',        icon: DollarSign },
+    { href: '/admin/refunds',       label: '💸 Lịch sử hoàn tiền', icon: DollarSign },
     { href: '/admin/logs',          label: '📋 Nhật ký',          icon: ClipboardList },
     { href: '/admin/settings',      label: '⚙️ Cài đặt',          icon: Settings },
   ];

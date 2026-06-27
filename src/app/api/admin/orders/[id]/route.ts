@@ -58,6 +58,7 @@ export async function PUT(
     }
 
     const { id } = await params;
+    const ipAddress = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '';
     const body = await request.json();
     const {
       accountEmail,
@@ -79,6 +80,8 @@ export async function PUT(
       paymentNote,
       paymentDueDate,
       paidAt,
+      saveHistory,
+      notifyCustomer,
     } = body;
 
     if (durationDays !== undefined) {
@@ -94,6 +97,14 @@ export async function PUT(
 
     if (!order) {
       return NextResponse.json({ error: 'Đơn hàng không tồn tại' }, { status: 404 });
+    }
+
+    // Check lock status
+    const isLocked = ['COMPLETED', 'SOURCE_REJECTED'].includes(order.status) && !order.isUnlocked;
+    if (isLocked) {
+      return NextResponse.json({
+        error: 'Đơn hàng đã hoàn tất hoặc bị từ chối và đang bị khóa. Vui lòng mở khóa đơn trước khi sửa.'
+      }, { status: 400 });
     }
 
     // 1. Get new supplier source name if changed
@@ -122,6 +133,10 @@ export async function PUT(
       changeLogs.push({ fieldName: 'costPrice', oldValue: order.costPrice, newValue: parsedCost });
     }
 
+    if (changeLogs.length > 0 && session.user.role !== 'ADMIN') {
+      return NextResponse.json({ error: 'Chỉ có Admin mới có quyền thay đổi giá bán, giá vốn đơn hàng' }, { status: 403 });
+    }
+
     const { priceChangeReason } = body;
 
     // 3. Update order in transaction with log records
@@ -143,6 +158,7 @@ export async function PUT(
         durationDays: durationDays !== undefined ? parseInt(durationDays) : undefined,
         supplierSourceId: supplierSourceId !== undefined ? supplierSourceId : undefined,
         supplierSourceName,
+        isUnlocked: false,
       };
 
       if (paymentDueDate !== undefined) {
@@ -208,14 +224,50 @@ export async function PUT(
       }
 
       // 4. Log Action
-      await tx.activityLog.create({
-        data: {
-          userId: logUserId,
-          action: 'UPDATE_ORDER',
-          target: `Order:${id}`,
-          details: `Cập nhật đơn hàng ${order.orderCode}. ${changeLogs.length > 0 ? 'Có thay đổi giá trị tài chính.' : ''} ${paymentStatus ? 'Trạng thái thanh toán: ' + paymentStatus : ''}`,
-        },
-      });
+      if (saveHistory !== false) {
+        const generalChangeDetails: string[] = [];
+        if (accountEmail !== undefined && accountEmail !== order.accountEmail) {
+          generalChangeDetails.push(`Email: "${order.accountEmail || 'N/A'}" -> "${accountEmail || 'N/A'}"`);
+        }
+        if (accountPassword !== undefined && accountPassword !== order.accountPassword) {
+          generalChangeDetails.push(`Mật khẩu thay đổi`);
+        }
+        if (status !== undefined && status !== order.status) {
+          generalChangeDetails.push(`Trạng thái: "${order.status}" -> "${status}"`);
+        }
+        if (packageName !== undefined && packageName !== order.packageName) {
+          generalChangeDetails.push(`Gói: "${order.packageName}" -> "${packageName}"`);
+        }
+        if (durationDays !== undefined && parseInt(durationDays) !== order.durationDays) {
+          generalChangeDetails.push(`Thời hạn: ${order.durationDays} ngày -> ${durationDays} ngày`);
+        }
+        if (supplierSourceId !== undefined && supplierSourceId !== order.supplierSourceId) {
+          generalChangeDetails.push(`Nguồn: "${order.supplierSourceName || 'Trực tiếp'}" -> "${supplierSourceName || 'Trực tiếp'}"`);
+        }
+        if (paymentStatus !== undefined && paymentStatus !== order.paymentStatus) {
+          generalChangeDetails.push(`Thanh toán: "${order.paymentStatus}" -> "${paymentStatus}"`);
+        }
+
+        let details = `Cập nhật đơn hàng ${order.orderCode}.`;
+        if (generalChangeDetails.length > 0) {
+          details += ` Chi tiết: ${generalChangeDetails.join(', ')}.`;
+        }
+        if (changeLogs.length > 0) {
+          details += ' Có thay đổi giá trị tài chính.';
+        }
+        if (notifyCustomer) {
+          details += ' Đã gửi thông báo cho khách hàng.';
+        }
+        await tx.activityLog.create({
+          data: {
+            userId: logUserId,
+            action: 'UPDATE_ORDER',
+            target: `Order:${id}`,
+            details,
+            ipAddress,
+          },
+        });
+      }
 
       return ord;
     });

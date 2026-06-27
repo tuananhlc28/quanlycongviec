@@ -1,4 +1,5 @@
 import prisma from './prisma';
+import { calculateDetailedCreditRating } from './utils';
 
 /**
  * Recalculate customer statistics, credit rating, and tag automatically.
@@ -86,46 +87,17 @@ export async function updateCustomerStats(customerId: string) {
       }
     });
 
-    const onTimeRate = totalOrders > 0 ? (paidOnTimeCount / totalOrders) : 1;
-    const refundRate = totalSpent > 0 ? (totalRefund / totalSpent) : 0;
-
-    // 3. Formula for credit rating score (0 - 100)
-    let score = 75; // Start with standard base of 75
-
-    // Add points for total spend (+15 max, reached at 3.000.000 VND spent)
-    score += Math.min(15, totalSpent / 200000);
-
-    // Add points for payment promptness rate (+15 max)
-    score += onTimeRate * 15;
-
-    // Deduct points for current active overdue bills (-5 per overdue)
-    score -= overdueCount * 5;
-
-    // Deduct points for historical late payments (-2 per late payment)
-    score -= latePaymentCount * 2;
-
-    // Add points for renewals (+10 max)
-    score += Math.min(10, renewalsCount * 2.5);
-
-    // Deduct points for warranties/errors (-3 per error, -15 max)
-    score -= Math.min(15, warrantyCount * 3);
-
-    // Deduct points for client refund rate (-15 max)
-    score -= Math.min(15, refundRate * 100);
-
-    // Add points for customer longevity (+10 max, reached at 300 days)
-    score += Math.min(10, daysSinceCreated / 30);
-
-    // Clamp score to [0, 100]
-    score = Math.max(0, Math.min(100, Math.round(score)));
-
-    // 4. Map credit score to rating
-    let rating = 'B';
-    if (score >= 95) rating = 'S';
-    else if (score >= 85) rating = 'A';
-    else if (score >= 70) rating = 'B';
-    else if (score >= 50) rating = 'C';
-    else rating = 'D';
+    const { score, rating } = calculateDetailedCreditRating({
+      totalOrders,
+      paidOnTimeCount,
+      latePaymentCount,
+      currentDebtCount: overdueCount,
+      totalSpend: totalSpent,
+      daysSinceCreated,
+      renewalsCount,
+      warrantyCount,
+      totalRefund,
+    });
 
     // 5. Automatic Segment Tag classification (if not manually set to locked, spam, etc.)
     // We only update segment tag automatically if it was one of the dynamic ones: NEW, REGULAR, VIP, INACTIVE_30, INACTIVE_60, INACTIVE_90

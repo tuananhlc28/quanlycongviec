@@ -11,6 +11,7 @@ import {
   ClipboardList
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import TimeFilterDropdown, { TimeRange, DateRange } from '@/components/shared/TimeFilterDropdown';
 
 interface LogsViewProps {
   services: { id: string; name: string }[];
@@ -49,7 +50,12 @@ export default function LogsView({ services, sources }: LogsViewProps) {
   const [filterSupplierId, setFilterSupplierId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [activePreset, setActivePreset] = useState('');
+
+  // Time Filter States
+  const [timeRange, setTimeRange] = useState<TimeRange>('all');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [dateRange, setDateRange] = useState<DateRange | null>(null);
 
   // Fetch Activity Logs
   const fetchLogs = useCallback(async () => {
@@ -88,61 +94,6 @@ export default function LogsView({ services, sources }: LogsViewProps) {
     fetchLogs();
   }, [fetchLogs]);
 
-  // Date Preset handler
-  const handlePreset = (preset: string) => {
-    const now = new Date();
-    let start = new Date(now);
-    let end = new Date(now);
-    setActivePreset(preset);
-
-    const formatDateString = (d: Date) => {
-      return d.toISOString().split('T')[0];
-    };
-
-    switch (preset) {
-      case 'today':
-        setStartDate(formatDateString(start));
-        setEndDate(formatDateString(end));
-        break;
-      case '3days':
-        start.setDate(start.getDate() - 2);
-        setStartDate(formatDateString(start));
-        setEndDate(formatDateString(end));
-        break;
-      case '7days':
-        start.setDate(start.getDate() - 6);
-        setStartDate(formatDateString(start));
-        setEndDate(formatDateString(end));
-        break;
-      case '30days':
-        start.setDate(start.getDate() - 29);
-        setStartDate(formatDateString(start));
-        setEndDate(formatDateString(end));
-        break;
-      case '3months':
-        start.setMonth(start.getMonth() - 3);
-        setStartDate(formatDateString(start));
-        setEndDate(formatDateString(end));
-        break;
-      case '6months':
-        start.setMonth(start.getMonth() - 6);
-        setStartDate(formatDateString(start));
-        setEndDate(formatDateString(end));
-        break;
-      case '1year':
-        start.setFullYear(start.getFullYear() - 1);
-        setStartDate(formatDateString(start));
-        setEndDate(formatDateString(end));
-        break;
-      case 'all':
-      case 'clear':
-        setStartDate('');
-        setEndDate('');
-        setActivePreset(preset === 'clear' ? '' : 'all');
-        break;
-    }
-    setPage(1);
-  };
 
   const handleClearAllFilters = () => {
     setFilterAction('');
@@ -152,7 +103,10 @@ export default function LogsView({ services, sources }: LogsViewProps) {
     setFilterSupplierId('');
     setStartDate('');
     setEndDate('');
-    setActivePreset('');
+    setTimeRange('all');
+    setCustomStart('');
+    setCustomEnd('');
+    setDateRange(null);
     setPage(1);
   };
 
@@ -172,43 +126,6 @@ export default function LogsView({ services, sources }: LogsViewProps) {
       <div className="space-y-4">
         {/* Advanced Filter Panel */}
         <div className="bg-[#131722]/50 p-4 rounded-2xl border border-white/5 space-y-4">
-          {/* Quick Date Presets */}
-          <div className="flex flex-wrap gap-1.5 items-center">
-            <span className="text-[10px] text-slate-500 uppercase font-bold mr-2">Thời gian nhanh:</span>
-            {['today', '3days', '7days', '30days', '3months', '6months', '1year', 'all'].map((preset) => {
-              const labels: Record<string, string> = {
-                today: 'Hôm nay',
-                '3days': '3 ngày',
-                '7days': '7 ngày',
-                '30days': '30 ngày',
-                '3months': '3 tháng',
-                '6months': '6 tháng',
-                '1year': '1 năm',
-                'all': 'Tất cả',
-              };
-              return (
-                <button
-                  key={preset}
-                  onClick={() => handlePreset(preset)}
-                  className={`px-2.5 py-1 text-xs rounded-lg font-semibold transition-all border cursor-pointer ${
-                    activePreset === preset
-                      ? 'bg-indigo-600 border-indigo-500 text-white'
-                      : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 text-slate-300'
-                  }`}
-                >
-                  {labels[preset]}
-                </button>
-              );
-            })}
-            {activePreset && (
-              <button
-                onClick={() => handlePreset('clear')}
-                className="px-2 py-1 text-[10px] bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg flex items-center gap-1 hover:bg-red-500/20 transition-all cursor-pointer font-semibold"
-              >
-                <X className="w-3 h-3" /> Hủy lọc thời gian
-              </button>
-            )}
-          </div>
 
           {/* Inputs & Dropdowns Grid */}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 pt-2 border-t border-white/5">
@@ -282,26 +199,33 @@ export default function LogsView({ services, sources }: LogsViewProps) {
               </select>
             </div>
 
-            {/* Date Custom range inputs */}
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] text-slate-500 uppercase font-semibold">Tùy chỉnh khoảng ngày</span>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => { setStartDate(e.target.value); setActivePreset(''); setPage(1); }}
-                  className="px-2 py-1.5 rounded-lg bg-[#131722] border border-white/10 text-white text-[10px] w-full focus:outline-none focus:border-indigo-500"
-                  title="Từ ngày"
-                />
-                <span className="text-slate-500 text-xs">→</span>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => { setEndDate(e.target.value); setActivePreset(''); setPage(1); }}
-                  className="px-2 py-1.5 rounded-lg bg-[#131722] border border-white/10 text-white text-[10px] w-full focus:outline-none focus:border-indigo-500"
-                  title="Đến ngày"
-                />
-              </div>
+            {/* Time Filter input */}
+            <div className="flex flex-col gap-1 col-span-2 xl:col-span-1">
+              <span className="text-[10px] text-slate-500 uppercase font-semibold">Thời gian</span>
+              <TimeFilterDropdown
+                value={timeRange}
+                onChange={(range, dates) => {
+                  setTimeRange(range);
+                  setDateRange(dates);
+                  if (range !== 'custom' && dates) {
+                    setStartDate(dates.start);
+                    setEndDate(dates.end);
+                  } else if (range === 'all') {
+                    setStartDate('');
+                    setEndDate('');
+                  }
+                  setPage(1);
+                }}
+                customStart={customStart}
+                customEnd={customEnd}
+                onCustomChange={(s, e) => {
+                  setCustomStart(s);
+                  setCustomEnd(e);
+                  setStartDate(s);
+                  setEndDate(e);
+                  setPage(1);
+                }}
+              />
             </div>
           </div>
 

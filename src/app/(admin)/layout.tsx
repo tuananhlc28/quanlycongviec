@@ -1,7 +1,13 @@
+'use client';
+
+import { useState } from 'react';
 import AdminSidebar from '@/components/layout/AdminSidebar';
 import KeyboardShortcuts from '@/components/shared/KeyboardShortcuts';
+import CommandPalette from '@/components/shared/CommandPalette';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  const [cmdOpen, setCmdOpen] = useState(false);
+
   return (
     <div className="min-h-screen flex bg-[#0a0e1a]">
       <AdminSidebar />
@@ -10,7 +16,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {children}
         </div>
       </main>
-      <KeyboardShortcuts />
+      <KeyboardShortcuts onOpenCommandPalette={() => setCmdOpen(true)} />
+      {cmdOpen && <CommandPalette onClose={() => setCmdOpen(false)} />}
     </div>
   );
 }

@@ -72,26 +72,10 @@ export default async function AdminReportsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <BarChart3 className="w-7 h-7 text-indigo-400" />
-            📈 Biểu đồ thống kê
+            📈 Báo cáo hoàn tiền
           </h1>
           <p className="text-sm text-slate-400 mt-1">Phân tích trực quan doanh số, đơn hàng, khách hàng và sự cố bảo hành</p>
         </div>
-      </div>
-
-      {/* Finance Navigation Tabs */}
-      <div className="flex border-b border-white/5">
-        <Link
-          href="/admin/refunds"
-          className="px-5 py-2.5 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-white transition-all"
-        >
-          Lịch sử hoàn tiền
-        </Link>
-        <Link
-          href="/admin/reports"
-          className="px-5 py-2.5 text-sm font-bold border-b-2 border-indigo-500 text-white transition-all"
-        >
-          Biểu đồ thống kê
-        </Link>
       </div>
 
       <ReportsDashboard 

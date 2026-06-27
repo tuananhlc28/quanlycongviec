@@ -5,7 +5,7 @@ import { Plus, Edit, Trash2, Loader2, X, AlertTriangle, Send, MessageCircle, Mai
 import toast from 'react-hot-toast';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, getSourceWarnings } from '@/lib/utils';
 import SourceDebtView from './SourceDebtView';
 
 interface SupplierSourceWithStats {
@@ -225,7 +225,7 @@ export default function SourcesList({ initialSources }: SourcesListProps) {
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          💸 Công nợ nguồn
+          💸 Nguồn còn nợ
         </button>
       </div>
 
@@ -265,7 +265,7 @@ export default function SourcesList({ initialSources }: SourcesListProps) {
             <div className="space-y-4">
               <div className="flex justify-between items-start">
                 <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2 flex-wrap">
                     <Link href={`/admin/sources/${src.id}`} className="hover:text-indigo-400 hover:underline transition-colors">
                       {src.name}
                     </Link>
@@ -274,6 +274,18 @@ export default function SourcesList({ initialSources }: SourcesListProps) {
                         Tạm Ngưng
                       </span>
                     )}
+                    {(() => {
+                      const warnings = getSourceWarnings({
+                        totalOrders: src.stats.totalOrders,
+                        totalErrors: src.stats.totalErrors,
+                        netDebt: src.stats.netDebt,
+                      });
+                      return warnings.map((w, idx) => (
+                        <span key={idx} className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[9px] font-bold" title={w}>
+                          {w}
+                        </span>
+                      ));
+                    })()}
                   </h3>
                   <p className="text-[10px] text-slate-500 mt-1">
                     Ngày tạo: {new Date(src.createdAt).toLocaleDateString('vi-VN')}

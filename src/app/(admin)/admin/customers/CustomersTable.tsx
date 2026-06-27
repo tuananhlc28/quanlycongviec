@@ -677,7 +677,6 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
             <tr className="border-b border-white/5 bg-white/2 text-xs font-semibold text-slate-400 uppercase tracking-wider">
               <th className="px-4 py-4 text-center w-12">STT</th>
               <th className="px-6 py-4">Họ tên / Phân loại / Uy tín</th>
-              <th className="px-6 py-4">Liên hệ</th>
               <th className="px-6 py-4">Tổng đơn</th>
               <th className="px-6 py-4">Tổng chi tiêu</th>
               <th className="px-6 py-4">Đang nợ</th>
@@ -729,56 +728,6 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    {hasContact ? (
-                      <div className="flex items-center gap-1.5">
-                        {c.phone && (
-                          <a
-                            href={`tel:${c.phone}`}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-emerald-500/20 text-slate-400 hover:text-emerald-400 border border-white/10 hover:border-emerald-500/30 transition-all"
-                            title={`SĐT: ${c.phone}`}
-                          >
-                            <Phone className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                        {(c.zalo || c.phone) && (
-                          <a
-                            href={`https://zalo.me/${c.zalo || c.phone}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-teal-500/20 text-slate-400 hover:text-teal-400 border border-white/10 hover:border-teal-500/30 transition-all"
-                            title={`Zalo: ${c.zalo || c.phone}`}
-                          >
-                            <MessageCircle className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                        {c.facebook && (
-                          <a
-                            href={c.facebook.startsWith('http') ? c.facebook : `https://${c.facebook}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-blue-500/20 text-slate-400 hover:text-blue-400 border border-white/10 hover:border-blue-500/30 transition-all"
-                            title={`Facebook: ${c.facebook}`}
-                          >
-                            <FacebookIcon className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                        {c.telegram && (
-                          <a
-                            href={`https://t.me/${c.telegram.replace('@', '')}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-sky-500/20 text-slate-400 hover:text-sky-400 border border-white/10 hover:border-sky-500/30 transition-all"
-                            title={`Telegram: ${c.telegram}`}
-                          >
-                            <Send className="w-3.5 h-3.5" />
-                          </a>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-slate-600">—</span>
-                    )}
-                  </td>
                   <td className="px-6 py-4 text-xs">{c.stats.totalOrders} đơn</td>
                   <td className="px-6 py-4 font-bold text-white text-xs">{formatCurrency(c.stats.totalSpent)}</td>
                   <td className={`px-6 py-4 text-xs ${c.stats.currentDebt > 0 ? 'font-bold text-rose-400' : 'text-slate-500'}`}>
@@ -788,44 +737,46 @@ export default function CustomersTable({ initialCustomers }: CustomersTableProps
                   <td className={`px-6 py-4 font-bold text-xs ${c.stats.totalProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {formatCurrency(c.stats.totalProfit)}
                   </td>
-                  <td className="px-6 py-4 text-xs font-semibold text-indigo-300 max-w-[180px] truncate" title={c.latestOrderServiceAndPackage}>
-                    {c.latestOrderServiceAndPackage}
+                  <td className="px-6 py-4 text-xs font-semibold text-indigo-300">
+                    <div className="max-w-[180px] truncate" title={c.latestOrderServiceAndPackage}>
+                      {c.latestOrderServiceAndPackage}
+                    </div>
                   </td>
                   <td className="px-6 py-4 font-mono text-xs">
                     {c.lastPurchaseDate ? new Date(c.lastPurchaseDate).toLocaleDateString('vi-VN') : '—'}
                   </td>
                   <td className="px-6 py-4">
-                    <div className="flex items-center justify-center gap-2">
+                    <div className="flex items-center justify-center gap-1.5">
                       {activeTab === 'active' ? (
                         <>
                           <button
                             onClick={() => handleOpenTimeline(c)}
-                            className="p-1.5 rounded-lg text-indigo-400 hover:text-white hover:bg-indigo-500/20 border border-indigo-500/20 transition-all cursor-pointer focus:outline-none"
+                            className="btn-compact font-semibold"
                             title="Lịch sử Timeline"
                           >
-                            <Clock className="w-4 h-4" />
+                            <Clock className="w-3 h-3" /> Timeline
                           </button>
                           <button
                             onClick={() => handleOpenModal(c)}
-                            className="p-1.5 rounded-lg text-indigo-400 hover:text-white hover:bg-indigo-500/20 border border-indigo-500/20 transition-all cursor-pointer focus:outline-none"
+                            className="btn-compact btn-compact-primary font-semibold"
                             title="Sửa thông tin"
                           >
-                            <Edit2 className="w-4 h-4" />
+                            <Edit2 className="w-3 h-3" /> Sửa
                           </button>
                           <button
                             onClick={() => handleOpenDelete(c)}
-                            className="p-1.5 rounded-lg text-rose-400 hover:text-white hover:bg-rose-500/20 border border-rose-500/20 transition-all cursor-pointer focus:outline-none"
+                            className="btn-compact btn-compact-danger font-semibold"
                             title="Xóa mềm"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3 h-3" /> Xóa
                           </button>
                         </>
                       ) : (
                         <button
                           onClick={() => handleRestore(c)}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-indigo-400 bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/10 hover:border-indigo-500/20 transition-all cursor-pointer focus:outline-none"
+                          className="btn-compact btn-compact-success font-semibold"
                         >
-                          <RotateCcw className="w-3.5 h-3.5" />
+                          <RotateCcw className="w-3 h-3" />
                           Khôi phục
                         </button>
                       )}
